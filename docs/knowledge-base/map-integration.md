@@ -20,12 +20,14 @@ The map feature is responsible for:
 ## Runtime Map Behavior
 
 - `MapScreen` renders a `GoogleMap` composable.
-- The initial camera centers on the first resolved itinerary item.
-- Markers are grouped visually by trip day, with per-day colors and compact numbered legend chips.
-- Tapping a legend chip keeps that day emphasized and fades the other days instead of fully hiding them.
-- A polyline is drawn for each visible day when two or more points are available.
-- The camera fits the visible point bounds on load when multiple resolved stops exist.
-- While Places resolution is still running and no points are ready yet, the screen shows a centered resolving overlay instead of the empty-state message.
+- The map uses a quiet basemap with light/dark styling, numbered markers, and stable per-day colors.
+- Day chips filter markers and places; All days restores the whole trip. Search matches titles, place names, and addresses within the selected day.
+- Stops and day connections follow itinerary `sortOrder`. Dotted connections describe stop order, not computed travel routes, and are suppressed during search.
+- A collapsible places panel shows stop names, times, and addresses. Selecting a row or marker focuses the camera and synchronizes the list selection.
+- Each place offers external Google Maps directions using coordinates and the saved place ID when available.
+- Floating controls switch standard/satellite maps, toggle connections, and fit visible places.
+- Camera bounds updates wait for map loading and account for the header and places panel.
+- Resolving, empty, search-empty, and map-configuration states have dedicated messages.
 
 ## Coordinate Resolution Strategy
 

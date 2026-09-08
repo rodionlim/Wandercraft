@@ -12,6 +12,8 @@ A single flat notes file is useful at first, but it becomes noisy and hard to qu
 
 ## Chronology Entry Points
 
+- [2026-09](./chronology/2026-09.md)
+
 - [Chronology Index](./chronology/index.md)
 - [2026-05](./chronology/2026-05.md)
 - [2026-04](./chronology/2026-04.md)
