@@ -30,3 +30,11 @@ A single flat notes file is useful at first, but it becomes noisy and hard to qu
 - Create a new monthly note when the calendar month changes.
 - If one month becomes too dense, split it into sub-files only when needed, but keep the chronology index as the stable entry point.
 - Do not turn chronology files into deep design docs; those belong in topic pages.
+
+## 2026-09-08 follow-up
+
+- [Sync reliability review and device-test incident](./sync-review-2026-09-08.md)
+- [Itinerary PDF export](./itinerary-pdf-export.md)
+
+- 2026-09-09: Added cross-account Drive trip snapshot sharing through Android file picker, validated import preview and transactional merge. See [Drive trip sharing](./drive-trip-sharing.md). Local validation only; recovered phone data untouched.
+- 2026-11-06: Added AI provider toggle in Settings to support both OpenAI and Gemini API keys and model selections (`gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, etc.). See [Settings and Onboarding](./settings-and-onboarding.md) and [AI and Imports](./ai-and-imports.md).

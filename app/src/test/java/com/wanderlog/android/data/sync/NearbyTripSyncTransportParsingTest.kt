@@ -114,6 +114,12 @@ class NearbyTripSyncTransportParsingTest {
     }
 
   @Test
+  fun `older peers without confirmation capability remain supported`() {
+    val parsed = parseIncomingControlPayload("""{"type":"manifest","tripId":"trip-1","manifest":{"records":[]}}""", controlPayloadAdapter)
+    assertEquals(false, parsed?.supportsApplyConfirmation)
+  }
+
+  @Test
   fun `control payload round trip preserves manifest and records`() {
     val manifest = TripSyncManifest(
       protocolVersion = TripSyncManifest.CURRENT_PROTOCOL_VERSION,
@@ -145,6 +151,7 @@ class NearbyTripSyncTransportParsingTest {
 
     assertNotNull(parsed)
     assertEquals("manifest", parsed?.type)
+    assertEquals(true, parsed?.supportsApplyConfirmation)
     assertEquals("trip-1", parsed?.tripId)
     assertEquals(TripSyncManifest.CURRENT_PROTOCOL_VERSION, parsed?.manifest?.protocolVersion)
     assertEquals(1, parsed?.manifest?.records?.size)

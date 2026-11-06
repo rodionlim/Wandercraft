@@ -1,5 +1,9 @@
 package com.wanderlog.android.presentation.sync
 
+import android.net.Uri
+import com.wanderlog.android.data.sync.TripFileStore
+import com.wanderlog.android.domain.model.sync.TripSyncBundle
+import kotlinx.coroutines.CancellationException
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -27,6 +31,9 @@ data class TripSyncUiState(
     val lastSyncSummary: String? = null,
     val logLines: List<String> = emptyList(),
     val errorMessage: String? = null,
+    val fileBusy: Boolean = false,
+    val fileMessage: String? = null,
+    val pendingFile: TripSyncBundle? = null,
     val isBusy: Boolean = false
 )
 
@@ -34,6 +41,7 @@ data class TripSyncUiState(
 class TripSyncViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val tripRepository: TripRepository,
+    private val tripFileStore: TripFileStore,
     private val nearbyTripSyncTransport: NearbyTripSyncTransport
 ) : ViewModel() {
 
@@ -43,6 +51,7 @@ class TripSyncViewModel @Inject constructor(
     val state: StateFlow<TripSyncUiState> = _state.asStateFlow()
 
     init {
+        nearbyTripSyncTransport.stop()
         refreshTripName(initialTripId)
 
         viewModelScope.launch {
@@ -70,16 +79,62 @@ class TripSyncViewModel @Inject constructor(
         }
     }
 
+    fun saveTripFile(uri: Uri) {
+        val tripId = state.value.tripId ?: return
+        fileOperation {
+            try {
+                tripFileStore.save(tripId, uri)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                throw IllegalStateException("Save failed: ${e.message ?: "storage unavailable"}. The selected location may contain an incomplete file; delete that file and try again.", e)
+            }
+            _state.update { it.copy(fileMessage = "Trip file saved. If you chose Drive, wait for its upload to finish, then share the file with the other account in Google Drive.") }
+        }
+    }
+
+    fun openTripFile(uri: Uri) = fileOperation {
+        _state.update { it.copy(pendingFile = null) }
+        val bundle = tripFileStore.read(uri)
+        _state.update { it.copy(pendingFile = bundle) }
+    }
+
+    fun dismissFilePreview() { _state.update { it.copy(pendingFile = null) } }
+
+    fun mergeTripFile() {
+        val bundle = state.value.pendingFile ?: return
+        fileOperation {
+            val result = tripFileStore.merge(bundle)
+            _state.update { it.copy(pendingFile = null, tripId = bundle.trip.id,
+                fileMessage = "Trip imported: ${result.appliedRecords} records updated, ${result.skippedRecords} unchanged.") }
+            refreshTripName(bundle.trip.id)
+        }
+    }
+
+    private fun fileOperation(block: suspend () -> Unit) {
+        if (state.value.fileBusy) return
+        nearbyTripSyncTransport.stop()
+        _state.update { it.copy(fileBusy = true, fileMessage = null) }
+        viewModelScope.launch {
+            try { block() }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { _state.update { it.copy(fileMessage = e.message ?: "Could not complete the trip file operation.") } }
+            finally { _state.update { it.copy(fileBusy = false) } }
+        }
+    }
+
     fun startHosting() {
+        if (state.value.fileBusy || state.value.pendingFile != null) return
         val tripId = state.value.tripId ?: return
         viewModelScope.launch { nearbyTripSyncTransport.startAdvertising(tripId) }
     }
 
     fun startDiscovery() {
-        viewModelScope.launch { nearbyTripSyncTransport.startDiscovery(state.value.tripId) }
+        if (state.value.fileBusy || state.value.pendingFile != null) return
+        viewModelScope.launch { nearbyTripSyncTransport.startDiscovery(initialTripId) }
     }
 
     fun connect(peer: NearbySyncPeer) {
+        if (state.value.fileBusy || state.value.pendingFile != null) return
         viewModelScope.launch { nearbyTripSyncTransport.requestConnection(peer) }
     }
 
@@ -88,7 +143,7 @@ class TripSyncViewModel @Inject constructor(
     }
 
     fun clearError() {
-        _state.update { it.copy(errorMessage = null) }
+        nearbyTripSyncTransport.clearError()
     }
 
     override fun onCleared() {

@@ -1,8 +1,7 @@
 package com.wanderlog.android.data.local.dao
 
 import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
+import androidx.room.Upsert
 import androidx.room.Query
 import androidx.room.Update
 import com.wanderlog.android.data.local.entity.ItineraryItemEntity
@@ -80,10 +79,10 @@ interface ItineraryItemDao {
         @Query("SELECT * FROM itinerary_items WHERE trip_id = :tripId ORDER BY trip_day_id, sort_order ASC")
         suspend fun getItemsForTripForSync(tripId: String): List<ItineraryItemEntity>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insertItem(item: ItineraryItemEntity)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insertItems(items: List<ItineraryItemEntity>)
 
     @Update

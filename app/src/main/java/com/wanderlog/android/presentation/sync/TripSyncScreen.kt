@@ -1,5 +1,9 @@
 package com.wanderlog.android.presentation.sync
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import android.Manifest
 import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +42,27 @@ fun TripSyncScreen(
     val state by viewModel.state.collectAsState()
     val permissionState = rememberMultiplePermissionsState(nearbyPermissions())
 
+    val saveFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {
+        it?.let(viewModel::saveTripFile)
+    }
+    val openFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
+        it?.let(viewModel::openTripFile)
+    }
+    state.pendingFile?.let { bundle ->
+        AlertDialog(
+            onDismissRequest = { if (!state.fileBusy) viewModel.dismissFilePreview() },
+            title = { Text("Import ${bundle.trip.name}?") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${bundle.trip.destination} · ${bundle.trip.startDate} to ${bundle.trip.endDate}")
+                Text("${bundle.itineraryItems.count { it.metadata.deletedAt == null }} itinerary items · ${bundle.attachments.count { it.metadata.deletedAt == null }} attachments")
+                Text("Adds this trip if it is new. For an existing trip, newer records win, including saved deletions. Other trips are kept.")
+                state.fileMessage?.let { Text(it) }
+            } },
+            confirmButton = { TextButton(onClick = viewModel::mergeTripFile, enabled = !state.fileBusy) { Text(if (state.fileBusy) "Importing…" else "Import and merge") } },
+            dismissButton = { TextButton(onClick = viewModel::dismissFilePreview, enabled = !state.fileBusy) { Text("Cancel") } }
+        )
+    }
+
     Scaffold(
         topBar = {
             WanderTopBar(
@@ -53,6 +78,28 @@ fun TripSyncScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Share with Google Drive", style = MaterialTheme.typography.titleMedium)
+                        Text("Save a trip file to Drive, then share it with another Google account using the Drive app. On the other phone, open the shared file here.")
+                        Text("Includes itinerary, budget, packing, notes, cover and booking attachments. API keys are excluded.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = {
+                            val name = state.tripName.replace(Regex("[^a-zA-Z0-9 _-]"), "").take(60).ifBlank { "Trip" }
+                            saveFile.launch("$name-${System.currentTimeMillis()}.wandercraft.json")
+                        }, enabled = state.tripId != null && !state.fileBusy && !state.isBusy, modifier = Modifier.fillMaxWidth()) {
+                            Text("Save trip to Drive or files")
+                        }
+                        OutlinedButton(onClick = { openFile.launch(arrayOf("*/*")) }, enabled = !state.fileBusy && !state.isBusy, modifier = Modifier.fillMaxWidth()) {
+                            Text("Open shared trip")
+                        }
+                        Text("Choose Google Drive in the file picker. If a shared file is missing, download it from Drive first and open it from Downloads. Both phones need a version with trip file sharing.", style = MaterialTheme.typography.bodySmall)
+                        Text("Sharing uses snapshots. To send later changes, save and share a new file. There is no automatic background sync.", style = MaterialTheme.typography.bodySmall)
+                        if (state.fileBusy) Text("Working on trip file…")
+                        state.fileMessage?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                    }
+                }
+            }
             item {
                 SyncStatusCard(
                     endpointName = state.localEndpointName,
@@ -72,7 +119,7 @@ fun TripSyncScreen(
 
             item {
                 SessionControls(
-                    enabled = permissionState.allPermissionsGranted,
+                    enabled = permissionState.allPermissionsGranted && !state.fileBusy && state.pendingFile == null,
                     canHost = state.tripId != null,
                     isBusy = state.isBusy,
                     onHost = viewModel::startHosting,
@@ -101,7 +148,7 @@ fun TripSyncScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(peer.endpointName, style = MaterialTheme.typography.titleSmall)
-                            OutlinedButton(onClick = { viewModel.connect(peer) }) {
+                            OutlinedButton(onClick = { viewModel.connect(peer) }, enabled = !state.isBusy && state.mode == NearbySyncMode.DISCOVERING) {
                                 Text("Connect")
                             }
                         }

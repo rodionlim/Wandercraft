@@ -1,5 +1,7 @@
 package com.wanderlog.android.data.sync
 
+import androidx.room.withTransaction
+import com.wanderlog.android.data.local.WanderlogDatabase
 import android.content.Context
 import android.net.Uri
 import com.wanderlog.android.core.util.TravellerProfilesCodec
@@ -38,6 +40,7 @@ import javax.inject.Singleton
 
 @Singleton
 class TripSyncBundleBuilder @Inject constructor(
+    private val database: WanderlogDatabase,
     private val tripDao: TripDao,
     private val tripDayDao: TripDayDao,
     private val itineraryItemDao: ItineraryItemDao,
@@ -52,7 +55,9 @@ class TripSyncBundleBuilder @Inject constructor(
     suspend fun buildBundle(
         tripId: String,
         generatedAt: Long = System.currentTimeMillis()
-    ): TripSyncBundle? {
+    ): TripSyncBundle? = database.withTransaction { buildSnapshot(tripId, generatedAt) }
+
+    private suspend fun buildSnapshot(tripId: String, generatedAt: Long): TripSyncBundle? {
         val trip = tripDao.getTripByIdIncludingDeleted(tripId) ?: return null
         if (trip.deletedAt != null) {
             return TripSyncBundle(
@@ -95,7 +100,7 @@ private fun TripEntity.toSyncPayload(filesDir: File): SyncTripPayload {
         startDate = startDate.toString(),
         endDate = endDate.toString(),
         coverImageUri = coverImageUri,
-        coverImageContentHash = coverFile?.takeIf { it.exists() && it.isFile }?.let(::hashFileSha256),
+        coverImageContentHash = coverBytes?.let(::hashBytesSha256),
         coverImageContentBase64 = coverBytes?.let { Base64.getEncoder().encodeToString(it) },
         budgetAmount = budgetAmount,
         currencyCode = currencyCode,
@@ -241,5 +246,5 @@ private fun String.toLocalCoverFileOrNull(filesDir: File): File? {
     val path = parsed.path ?: return null
     val file = File(path)
     val coverDir = File(filesDir, "trip-covers")
-    return file.takeIf { it.absolutePath.startsWith(coverDir.absolutePath) }
+    return file.takeIf { it.canonicalFile.toPath().startsWith(coverDir.canonicalFile.toPath()) }
 }

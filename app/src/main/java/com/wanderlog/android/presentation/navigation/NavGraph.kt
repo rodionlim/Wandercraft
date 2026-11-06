@@ -6,7 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -22,7 +21,7 @@ import com.wanderlog.android.presentation.map.MapScreen
 import com.wanderlog.android.presentation.itinerary.TripItineraryScreen
 import com.wanderlog.android.presentation.notes.TripNotesScreen
 import com.wanderlog.android.presentation.packing.PackingScreen
-import com.wanderlog.android.presentation.settings.OpenAiApiKeyHelpDialog
+import com.wanderlog.android.presentation.settings.AiOnboardingDialog
 import com.wanderlog.android.presentation.settings.SettingsScreen
 import com.wanderlog.android.presentation.settings.SettingsViewModel
 import com.wanderlog.android.presentation.share.ShareImportScreen
@@ -35,9 +34,8 @@ import com.wanderlog.android.presentation.trips.list.TripListScreen
 fun WanderlogNavGraph(startAtShare: Boolean = false) {
     val navController = rememberNavController()
     val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
     val shouldPromptForOpenAiKey = rememberSaveable {
-        SettingsViewModel.getOpenAiKey(context).isBlank()
+        !SettingsViewModel.hasConfiguredAiKey(context)
     }
     var showOpenAiOnboarding by rememberSaveable(shouldPromptForOpenAiKey) {
         mutableStateOf(shouldPromptForOpenAiKey)
@@ -213,19 +211,12 @@ fun WanderlogNavGraph(startAtShare: Boolean = false) {
     }
 
     if (showOpenAiOnboarding) {
-        OpenAiApiKeyHelpDialog(
-            title = "Set up AI features",
-            confirmLabel = "Go to Settings",
-            dismissLabel = "Later",
-            onConfirm = {
+        AiOnboardingDialog(
+            onGoToSettings = {
                 showOpenAiOnboarding = false
                 navController.navigate(Screen.Settings.route)
             },
-            onDismiss = { showOpenAiOnboarding = false },
-            onOpenOpenAi = {
-                uriHandler.openUri("https://platform.openai.com/api-keys")
-            },
-            introductoryText = "AI features such as itinerary generation, Ask About Trip, and booking import need an OpenAI API key before they can be used."
+            onDismiss = { showOpenAiOnboarding = false }
         )
     }
 }

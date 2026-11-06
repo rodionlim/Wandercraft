@@ -18,6 +18,7 @@ class DefaultSyncMetadataStamp @Inject constructor(
 
     override fun now(): Long = System.currentTimeMillis()
 
+    @Synchronized
     override fun currentDeviceId(): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return prefs.getString(KEY_DEVICE_ID, null)

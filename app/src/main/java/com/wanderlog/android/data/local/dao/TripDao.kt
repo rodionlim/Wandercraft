@@ -1,8 +1,7 @@
 package com.wanderlog.android.data.local.dao
 
 import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
+import androidx.room.Upsert
 import androidx.room.Query
 import androidx.room.Update
 import com.wanderlog.android.data.local.entity.TripEntity
@@ -20,7 +19,7 @@ interface TripDao {
     @Query("SELECT * FROM trips WHERE id = :tripId")
     suspend fun getTripByIdIncludingDeleted(tripId: String): TripEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insertTrip(trip: TripEntity)
 
     @Update

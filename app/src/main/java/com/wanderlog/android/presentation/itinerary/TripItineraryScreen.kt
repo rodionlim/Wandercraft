@@ -1,5 +1,16 @@
 package com.wanderlog.android.presentation.itinerary
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import android.widget.Toast
+import com.wanderlog.android.presentation.itinerary.export.writeItineraryPdf
+
 import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -108,6 +119,30 @@ fun TripItineraryScreen(
     viewModel: TripItineraryViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsState()
+    val exportContext = LocalContext.current
+    val exportScope = rememberCoroutineScope()
+    var exporting by remember { mutableStateOf(false) }
+    var exportSnapshot by remember { mutableStateOf<ItineraryUiState?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val snapshot = exportSnapshot ?: state
+        exportSnapshot = null
+        if (uri != null) {
+            exporting = true
+            exportScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        exportContext.contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                            writeItineraryPdf(snapshot.tripName, snapshot.tripDestination, snapshot.days, snapshot.allTripItems, output)
+                        } ?: error("Unable to open the selected file")
+                    }
+                    Toast.makeText(exportContext, "Itinerary PDF saved", Toast.LENGTH_LONG).show()
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    Toast.makeText(exportContext, "Could not export PDF: ${error.message}", Toast.LENGTH_LONG).show()
+                } finally { exporting = false }
+            }
+        }
+    }
     val rawItems by viewModel.itemsForDay.collectAsState()
     val uriHandler = LocalUriHandler.current
     val selectedDayItems = remember(rawItems) { sortItineraryItems(rawItems) }
@@ -214,6 +249,15 @@ fun TripItineraryScreen(
                             expanded = showOverflowMenu,
                             onDismissRequest = { showOverflowMenu = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text(if (exporting) "Exporting PDF…" else "Export itinerary as PDF") },
+                                enabled = !exporting && !state.isLoading && state.tripName.isNotBlank(),
+                                onClick = {
+                                    showOverflowMenu = false
+                                    exportSnapshot = state
+                                    exportLauncher.launch(state.tripName.replace(Regex("[^\\p{L}\\p{N} ._-]"), "_") + " - itinerary.pdf")
+                                }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Photos") },
                                 leadingIcon = { Icon(Icons.Default.Image, contentDescription = null) },

@@ -118,3 +118,9 @@ This keeps merge outcomes deterministic even when timestamps are equal.
 - [Sync and Storage](./sync-and-storage.md)
 - [Project Overview](./project-overview.md)
 - [Development and Operations](./development-and-operations.md)
+
+## Reliability changes (2026-09-08)
+
+See the [sync reliability review](./sync-review-2026-09-08.md) for confirmed defects, fixes, validation, and remaining limitations. Both phones should use the same latest app version. A delivered bundle is not necessarily a saved trip: newer peers explicitly confirm database application; older compatible peers require checking the receiving phone.
+
+Instrumented tests must use disposable devices. The test runner can uninstall apps and erase data; connected-test tasks are now guarded, and APK retention is enabled.

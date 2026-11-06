@@ -10,7 +10,7 @@ class CompareTripSyncManifestsUseCase @Inject constructor() {
 
     operator fun invoke(local: TripSyncManifest, remote: TripSyncManifest): TripSyncMergePlan {
         require(local.protocolVersion == remote.protocolVersion) {
-            "Cannot compare manifests with different protocol versions"
+            "These app versions cannot sync (local protocol ${local.protocolVersion}, remote ${remote.protocolVersion}). Update both devices to the same latest app version and retry."
         }
         require(local.tripId == remote.tripId) {
             "Cannot compare manifests for different trips"

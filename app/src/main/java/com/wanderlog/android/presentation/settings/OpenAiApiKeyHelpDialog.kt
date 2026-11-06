@@ -1,8 +1,5 @@
 package com.wanderlog.android.presentation.settings
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -17,7 +14,6 @@ fun OpenAiApiKeyHelpDialog(
     dismissLabel: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
-    onOpenOpenAi: (() -> Unit)? = null,
     introductoryText: String? = null
 ) {
     val appName = stringResource(R.string.app_name)
@@ -46,15 +42,76 @@ fun OpenAiApiKeyHelpDialog(
             }
         },
         dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                onOpenOpenAi?.let { openOpenAi ->
-                    TextButton(onClick = openOpenAi) {
-                        Text("Open OpenAI")
-                    }
+            TextButton(onClick = onDismiss) {
+                Text(dismissLabel)
+            }
+        }
+    )
+}
+
+@Composable
+fun AiOnboardingDialog(
+    onGoToSettings: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val appName = stringResource(R.string.app_name)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Set up AI features") },
+        text = {
+            Text(
+                buildString {
+                    append("AI features such as itinerary generation, Ask About Trip, and booking import need an OpenAI or Gemini API key before they can be used.\n\n")
+                    append("Open $appName Settings to choose your preferred AI provider and paste your API key. Tap the help icon next to the key field in Settings if you need a link to create one.")
                 }
-                TextButton(onClick = onDismiss) {
-                    Text(dismissLabel)
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onGoToSettings) {
+                Text("Go to Settings")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Later")
+            }
+        }
+    )
+}
+
+@Composable
+fun GeminiApiKeyHelpDialog(
+    title: String,
+    confirmLabel: String,
+    dismissLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val appName = stringResource(R.string.app_name)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Text(
+                buildString {
+                    append("1. Sign in to Google AI Studio and create an API key from the API keys page.\n\n")
+                    append("2. Copy that key and paste it into the Gemini API Key field in $appName Settings.\n\n")
+                    append(
+                        "Tip: Google AI Studio offers a free tier for Gemini Flash and Flash-Lite models with generous daily limits for personal use."
+                    )
                 }
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(dismissLabel)
             }
         }
     )

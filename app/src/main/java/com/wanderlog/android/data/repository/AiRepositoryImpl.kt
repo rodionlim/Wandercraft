@@ -30,6 +30,9 @@ import com.wanderlog.android.domain.model.TripAssistantMessage
 import com.wanderlog.android.domain.model.TripAssistantRole
 import com.wanderlog.android.domain.model.TripDay
 import com.wanderlog.android.domain.repository.AiRepository
+import com.wanderlog.android.presentation.settings.AiProvider
+import com.wanderlog.android.presentation.settings.GeminiModels
+import com.wanderlog.android.presentation.settings.OpenAiModels
 import com.wanderlog.android.presentation.settings.SettingsViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
@@ -52,6 +55,9 @@ class AiRepositoryImpl @Inject constructor(
     )
 
     private val chatCompletionsVisionModels = setOf(
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
         "gpt-4o",
         "gpt-4o-mini",
         "gpt-4.1",
@@ -133,8 +139,10 @@ class AiRepositoryImpl @Inject constructor(
             }
         }
 
+        val provider = SettingsViewModel.getAiProvider(context)
         val request = buildChatCompletionRequest(
-            model = SettingsViewModel.getOpenAiModel(context),
+            provider = provider,
+            model = SettingsViewModel.getActiveAiModel(context),
             messages = listOf(
                 MessageDto("system", systemPrompt),
                 MessageDto("user", userPrompt)
@@ -142,7 +150,7 @@ class AiRepositoryImpl @Inject constructor(
             responseFormat = ResponseFormatDto("json_object")
         )
 
-        val response = chatCompletionOrThrow(request, "generate itinerary")
+        val response = chatCompletionOrThrow(request, "generate itinerary", provider)
         val json = response.choices.first().message.content
         return parseItineraryJson(json, destination)
     }
@@ -196,8 +204,10 @@ class AiRepositoryImpl @Inject constructor(
             $userPrompt
         """.trimIndent()
 
+        val provider = SettingsViewModel.getAiProvider(context)
         val request = buildChatCompletionRequest(
-            model = SettingsViewModel.getOpenAiModel(context),
+            provider = provider,
+            model = SettingsViewModel.getActiveAiModel(context),
             messages = listOf(
                 MessageDto("system", systemPrompt),
                 MessageDto("user", userPromptText)
@@ -205,7 +215,7 @@ class AiRepositoryImpl @Inject constructor(
             responseFormat = ResponseFormatDto("json_object")
         )
 
-        val response = chatCompletionOrThrow(request, "update packing list")
+        val response = chatCompletionOrThrow(request, "update packing list", provider)
         val json = response.choices.first().message.content
         return parsePackingListJson(json, trip)
     }
@@ -250,12 +260,14 @@ class AiRepositoryImpl @Inject constructor(
             add(MessageDto("user", currentQuestionContent))
         }
 
+        val provider = SettingsViewModel.getAiProvider(context)
         val request = buildChatCompletionRequest(
-            model = SettingsViewModel.getOpenAiModel(context),
+            provider = provider,
+            model = SettingsViewModel.getActiveAiModel(context),
             messages = messages
         )
 
-        val response = chatCompletionOrThrow(request, "answer a trip question")
+        val response = chatCompletionOrThrow(request, "answer a trip question", provider)
         return response.choices.first().message.content.trim()
     }
 
@@ -381,11 +393,13 @@ class AiRepositoryImpl @Inject constructor(
             }
         """.trimIndent())
 
-        val selectedModel = SettingsViewModel.getOpenAiModel(context)
-        val selectedParsingModel = SettingsViewModel.getOpenAiParsingModel(context)
-        val requestModel = pickParsingModel(selectedModel, selectedParsingModel, contentParts)
+        val provider = SettingsViewModel.getAiProvider(context)
+        val selectedModel = SettingsViewModel.getActiveAiModel(context)
+        val selectedParsingModel = SettingsViewModel.getActiveAiParsingModel(context)
+        val requestModel = pickParsingModel(provider, selectedModel, selectedParsingModel, contentParts)
         val allParts: List<Any> = listOf(parsePrompt) + contentParts
         val request = buildChatCompletionRequest(
+            provider = provider,
             model = requestModel,
             messages = listOf(
                 MessageDto("system", systemPrompt),
@@ -396,7 +410,8 @@ class AiRepositoryImpl @Inject constructor(
 
         val response = chatCompletionOrThrow(
             request,
-            "parse booking document with model $requestModel"
+            "parse booking document with model $requestModel",
+            provider
         )
         val json = response.choices.first().message.content
         return parseBookingJson(json)
@@ -406,9 +421,11 @@ class AiRepositoryImpl @Inject constructor(
         contentParts: List<ContentPartDto>,
         fallbackCurrencyCode: String
     ): ParsedBudgetExpenseImport {
+        val provider = SettingsViewModel.getAiProvider(context)
         val requestModel = pickParsingModel(
-            SettingsViewModel.getOpenAiModel(context),
-            SettingsViewModel.getOpenAiParsingModel(context),
+            provider,
+            SettingsViewModel.getActiveAiModel(context),
+            SettingsViewModel.getActiveAiParsingModel(context),
             contentParts
         )
         val systemPrompt = "You are a budget expense photo parser. Always respond with valid JSON only."
@@ -433,6 +450,7 @@ class AiRepositoryImpl @Inject constructor(
         """.trimIndent())
 
         val request = buildChatCompletionRequest(
+            provider = provider,
             model = requestModel,
             messages = listOf(
                 MessageDto("system", systemPrompt),
@@ -443,12 +461,14 @@ class AiRepositoryImpl @Inject constructor(
 
         val response = chatCompletionOrThrow(
             request,
-            "parse budget expense photo with model $requestModel"
+            "parse budget expense photo with model $requestModel",
+            provider
         )
         return parseBudgetExpenseJson(response.choices.first().message.content, fallbackCurrencyCode)
     }
 
     private fun pickParsingModel(
+        provider: AiProvider,
         selectedModel: String,
         selectedParsingModel: String,
         contentParts: List<ContentPartDto>
@@ -457,16 +477,22 @@ class AiRepositoryImpl @Inject constructor(
         if (!hasImageInput) {
             return selectedModel
         }
-        return selectedParsingModel.takeIf { it in chatCompletionsVisionModels } ?: "gpt-4o-mini"
+        return when (provider) {
+            AiProvider.GEMINI -> GeminiModels.sanitizeParsingModel(selectedParsingModel)
+            AiProvider.OPENAI -> selectedParsingModel.takeIf { it in chatCompletionsVisionModels }
+                ?: OpenAiModels.DEFAULT_PARSING_MODEL
+        }
     }
 
     private fun buildChatCompletionRequest(
+        provider: AiProvider,
         model: String,
         messages: List<MessageDto>,
         responseFormat: ResponseFormatDto? = null
     ): ChatCompletionRequest {
         val normalizedModel = model.trim().lowercase()
-        val usesCompletionTokens = completionTokensModels.any { tokenModel ->
+        val isGemini = provider == AiProvider.GEMINI
+        val usesCompletionTokens = provider == AiProvider.OPENAI && completionTokensModels.any { tokenModel ->
             normalizedModel.startsWith(tokenModel) || normalizedModel.contains(tokenModel)
         }
 
@@ -474,25 +500,47 @@ class AiRepositoryImpl @Inject constructor(
             model = model,
             messages = messages,
             responseFormat = responseFormat,
-            maxTokens = if (usesCompletionTokens) null else 4096,
-            maxCompletionTokens = if (usesCompletionTokens) 4096 else null,
-            temperature = 0.3
+            // Leave max_tokens unset for Gemini so thinking tokens + JSON output aren't truncated at 4096.
+            maxTokens = if (isGemini || usesCompletionTokens) null else 16384,
+            maxCompletionTokens = if (!isGemini && usesCompletionTokens) 16384 else null,
+            // Leave sampling at the model default for the new reasoning family.
+            temperature = if (normalizedModel.startsWith("gpt-5.6")) null else 0.3
         )
     }
 
     private suspend fun chatCompletionOrThrow(
         request: ChatCompletionRequest,
-        action: String
+        action: String,
+        provider: AiProvider = SettingsViewModel.getAiProvider(context)
     ) = try {
         openAiService.chatCompletion(request)
     } catch (exception: HttpException) {
         val errorBody = exception.response()?.errorBody()?.string()?.trim().orEmpty()
         val detail = errorBody.ifBlank { exception.message() ?: "HTTP ${exception.code()}" }
-        throw IllegalStateException("OpenAI failed to $action: $detail", exception)
+        throw IllegalStateException("${provider.label} failed to $action: $detail", exception)
+    }
+
+    private fun stripJsonCodeFence(raw: String): String {
+        val trimmed = raw.trim()
+        val unfenced = if (trimmed.startsWith("```")) {
+            trimmed
+                .replaceFirst(Regex("^```(?:json)?\\s*", RegexOption.IGNORE_CASE), "")
+                .replaceFirst(Regex("\\s*```$"), "")
+                .trim()
+        } else {
+            trimmed
+        }
+        val firstBrace = unfenced.indexOf('{')
+        val lastBrace = unfenced.lastIndexOf('}')
+        return if (firstBrace >= 0 && lastBrace > firstBrace) {
+            unfenced.substring(firstBrace, lastBrace + 1)
+        } else {
+            unfenced
+        }
     }
 
     private fun parseItineraryJson(json: String, tripId: String): List<TripDay> {
-        val root = JSONObject(json)
+        val root = JSONObject(stripJsonCodeFence(json))
         val daysArray = root.getJSONArray("days")
         val result = mutableListOf<TripDay>()
 
@@ -547,8 +595,8 @@ class AiRepositoryImpl @Inject constructor(
     }
 
     private fun parsePackingListJson(json: String, trip: Trip): List<PackingItem> {
-        val root = JSONObject(json)
-        val items = root.optJSONArray("items") ?: throw IllegalStateException("OpenAI returned packing JSON without an items array.")
+        val root = JSONObject(stripJsonCodeFence(json))
+        val items = root.optJSONArray("items") ?: throw IllegalStateException("AI returned packing JSON without an items array.")
 
         return buildList {
             for (index in 0 until items.length()) {
@@ -582,7 +630,7 @@ class AiRepositoryImpl @Inject constructor(
         if (isNull(key)) null else optString(key).trim().ifBlank { null }
 
     private fun parseBookingJson(json: String): ParsedBooking {
-        val root = JSONObject(json)
+        val root = JSONObject(stripJsonCodeFence(json))
 
         val flights = buildList {
             val arr = root.optJSONArray("flights") ?: return@buildList
@@ -678,8 +726,8 @@ class AiRepositoryImpl @Inject constructor(
     }
 
     private fun parseBudgetExpenseJson(json: String, fallbackCurrencyCode: String): ParsedBudgetExpenseImport {
-        val root = JSONObject(json)
-        val items = root.optJSONArray("items") ?: throw IllegalStateException("OpenAI returned budget JSON without an items array.")
+        val root = JSONObject(stripJsonCodeFence(json))
+        val items = root.optJSONArray("items") ?: throw IllegalStateException("AI returned budget JSON without an items array.")
 
         return ParsedBudgetExpenseImport(
             items = buildList {

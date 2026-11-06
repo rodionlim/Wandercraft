@@ -18,15 +18,16 @@ import org.junit.Test
 
 class TripSyncCoordinatorTest {
 
+    private val manifestBuilder = mockk<TripSyncManifestBuilder>()
     private val bundleBuilder = mockk<TripSyncBundleBuilder>()
     private val bundleApplier = mockk<TripSyncBundleApplier>()
     private val compareUseCase = mockk<CompareTripSyncManifestsUseCase>()
-    private val coordinator = TripSyncCoordinator(bundleBuilder, bundleApplier, compareUseCase)
+    private val coordinator = TripSyncCoordinator(manifestBuilder, bundleBuilder, bundleApplier, compareUseCase)
 
     @Test
-    fun `buildLocalManifest delegates through bundle builder`() = kotlinx.coroutines.test.runTest {
+    fun `buildLocalManifest uses metadata without serializing attachment contents`() = kotlinx.coroutines.test.runTest {
         val bundle = bundle()
-        coEvery { bundleBuilder.buildBundle("trip-1", any()) } returns bundle
+        coEvery { manifestBuilder.buildManifest("trip-1", any()) } returns bundle.toManifest()
 
         val manifest = coordinator.buildLocalManifest("trip-1")
 
@@ -55,7 +56,7 @@ class TripSyncCoordinatorTest {
             unchangedKeys = emptyList()
         )
 
-        coEvery { bundleBuilder.buildBundle("trip-1", any()) } returns localBundle
+        coEvery { manifestBuilder.buildManifest("trip-1", any()) } returns localBundle.toManifest()
         every { compareUseCase(localBundle.toManifest(), remoteManifest) } returns expectedPlan
 
         val result = coordinator.compareWithRemoteManifest("trip-1", remoteManifest)
@@ -65,7 +66,7 @@ class TripSyncCoordinatorTest {
 
     @Test
     fun `compareWithRemoteManifestOrEmpty falls back to empty local manifest`() = kotlinx.coroutines.test.runTest {
-        val realCoordinator = TripSyncCoordinator(bundleBuilder, bundleApplier, CompareTripSyncManifestsUseCase())
+        val realCoordinator = TripSyncCoordinator(manifestBuilder, bundleBuilder, bundleApplier, CompareTripSyncManifestsUseCase())
         val remoteManifest = TripSyncManifest(
             tripId = "trip-1",
             generatedAt = 20L,
@@ -84,7 +85,7 @@ class TripSyncCoordinatorTest {
             unchangedKeys = emptyList()
         )
 
-        coEvery { bundleBuilder.buildBundle("trip-1", any()) } returns null
+        coEvery { manifestBuilder.buildManifest("trip-1", any()) } returns null
 
         val result = realCoordinator.compareWithRemoteManifestOrEmpty(remoteManifest)
 

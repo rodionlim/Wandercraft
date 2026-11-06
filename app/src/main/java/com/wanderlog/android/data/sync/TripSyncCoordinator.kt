@@ -9,6 +9,7 @@ import javax.inject.Singleton
 
 @Singleton
 class TripSyncCoordinator @Inject constructor(
+    private val manifestBuilder: TripSyncManifestBuilder,
     private val bundleBuilder: TripSyncBundleBuilder,
     private val bundleApplier: TripSyncBundleApplier,
     private val compareTripSyncManifests: CompareTripSyncManifestsUseCase
@@ -18,7 +19,7 @@ class TripSyncCoordinator @Inject constructor(
         bundleBuilder.buildBundle(tripId)
 
     suspend fun buildLocalManifest(tripId: String): TripSyncManifest? =
-        buildLocalBundle(tripId)?.toManifest()
+        manifestBuilder.buildManifest(tripId)
 
     suspend fun buildLocalManifestOrEmpty(tripId: String): TripSyncManifest =
         buildLocalManifest(tripId)

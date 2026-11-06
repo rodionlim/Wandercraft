@@ -1,14 +1,16 @@
 # AI and Imports
 
-## OpenAI Integration
+## OpenAI & Gemini Integration
 
-- `AiRepositoryImpl` uses `POST /v1/chat/completions` with JSON-object responses.
-- Settings persist two model choices:
+- `AiRepositoryImpl` uses `POST /v1/chat/completions` with JSON-object responses, routing through OpenAI (`https://api.openai.com/v1/chat/completions`) or Google Gemini's OpenAI-compatible endpoint (`https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`) via `ApiKeyInterceptor` based on the active provider in Settings.
+- Settings persist separate API keys and two model choices per provider:
   - General model for itinerary generation and text-heavy flows
   - Parsing model for image/PDF booking parsing
 - Current defaults:
-  - General: `gpt-5.4-mini`
-  - Parsing: `gpt-4o-mini`
+  - OpenAI General: `gpt-5.4-mini`
+  - OpenAI Parsing: `gpt-4o-mini`
+  - Gemini General: `gemini-3.8-flash`
+  - Gemini Parsing: `gemini-3.5-flash-lite`
 
 ## AI Generate
 

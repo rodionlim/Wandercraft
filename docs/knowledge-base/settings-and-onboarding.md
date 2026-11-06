@@ -6,10 +6,11 @@ The settings area manages runtime configuration that should remain on-device and
 
 Current responsibilities include:
 
-- storing the OpenAI API key
+- selecting the active AI provider (`OpenAI` or `Gemini`)
+- storing the OpenAI API key and Gemini API key independently
 - storing the runtime Google Maps / Places key
-- selecting the general OpenAI model
-- selecting the booking image/PDF parsing model
+- selecting the general AI model per provider
+- selecting the booking image/PDF parsing model per provider
 - selecting the budget display currency
 - exposing sync-maintenance actions such as deleted-tombstone reset
 
@@ -19,25 +20,31 @@ Settings are stored in `EncryptedSharedPreferences` protected by Android Keystor
 
 Important persisted values include:
 
+- `ai_provider`
 - `openai_api_key`
+- `gemini_api_key`
 - `maps_api_key`
 - `openai_model`
 - `openai_parsing_model`
+- `gemini_model`
+- `gemini_parsing_model`
 - `budget_display_currency`
 
-## OpenAI Model Selection
+## AI Provider & Model Selection
 
-The app uses separate model slots for different workloads:
+The app uses separate model slots for different workloads per provider:
 
 - general model for itinerary generation and text-oriented AI flows
 - parsing model for booking images and PDFs
 
 Current defaults:
 
-- general model: `gpt-5.4-mini`
-- parsing model: `gpt-4o-mini`
+- OpenAI general model: `gpt-5.4-mini`
+- OpenAI parsing model: `gpt-4o-mini`
+- Gemini general model: `gemini-3.8-flash`
+- Gemini parsing model: `gemini-3.5-flash-lite`
 
-The selectable model lists are defined in `SettingsViewModel`.
+The selectable model lists (`OpenAiModels` and `GeminiModels`) are defined in `SettingsViewModel`.
 
 ## OpenAI API Key Help
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -31,6 +32,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -68,6 +70,7 @@ fun TripFormScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .imePadding()
                 .padding(horizontal = 16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
@@ -78,6 +81,7 @@ fun TripFormScreen(
                 onValueChange = viewModel::onNameChange,
                 label = { Text("Trip name") },
                 modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                 singleLine = true
             )
             Spacer(Modifier.height(12.dp))
@@ -105,7 +109,10 @@ fun TripFormScreen(
                 onValueChange = viewModel::onBudgetChange,
                 label = { Text("Budget (optional)") },
                 modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Decimal,
+                    imeAction = ImeAction.Next
+                ),
                 singleLine = true
             )
             Spacer(Modifier.height(12.dp))
@@ -124,11 +131,15 @@ fun TripFormScreen(
                 onValueChange = viewModel::onTravellerCountChange,
                 label = { Text("Number of travellers") },
                 modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = if (state.travellerProfiles.isEmpty()) ImeAction.Done else ImeAction.Next
+                ),
                 singleLine = true
             )
 
             state.travellerProfiles.forEachIndexed { index, travellerProfile ->
+                val isLastTraveller = index == state.travellerProfiles.lastIndex
                 Spacer(Modifier.height(12.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(
@@ -136,6 +147,7 @@ fun TripFormScreen(
                         onValueChange = { viewModel.onTravellerNameChange(index, it) },
                         label = { Text("Traveller ${index + 1} name or alias") },
                         modifier = Modifier.weight(1f),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         singleLine = true
                     )
                     Spacer(Modifier.width(12.dp))
@@ -144,7 +156,10 @@ fun TripFormScreen(
                         onValueChange = { viewModel.onTravellerAgeChange(index, it) },
                         label = { Text("Age") },
                         modifier = Modifier.width(112.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = if (isLastTraveller) ImeAction.Done else ImeAction.Next
+                        ),
                         singleLine = true
                     )
                 }
@@ -163,6 +178,7 @@ fun TripFormScreen(
             ) {
                 Text(if (state.tripId == null) "Create Trip" else "Save Changes")
             }
+            Spacer(Modifier.height(24.dp))
         }
 
         if (state.isLoading) LoadingOverlay()
@@ -252,6 +268,7 @@ private fun DestinationField(
             },
             label = { Text("Destination") },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
                 .fillMaxWidth()

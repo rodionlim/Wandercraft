@@ -67,6 +67,32 @@ class TripSyncBundleApplier @Inject constructor(
             "Unsupported sync protocol version ${bundle.protocolVersion}"
         }
 
+        validateSyncBundle(bundle)
+        // Validate ownership before any writes, even when an incoming ID already exists.
+        val existingDays = tripDayDao.getDaysForTripForSync(bundle.trip.id)
+        for (day in bundle.tripDays) require(existingDays.none { it.date.toString() == day.date && it.id != day.id }) {
+            "The devices have different day records for ${day.date}. Resolve the duplicate trip days before retrying."
+        }
+        for (day in bundle.tripDays) require(tripDayDao.getByIdIncludingDeleted(day.id)?.tripId.let { it == null || it == bundle.trip.id }) { "Trip day belongs to another trip" }
+        for (item in bundle.itineraryItems) {
+            require(itineraryItemDao.getByIdIncludingDeleted(item.id)?.tripId.let { it == null || it == bundle.trip.id }) { "Item belongs to another trip" }
+            val dayTrip = bundle.tripDays.firstOrNull { it.id == item.tripDayId }?.tripId
+                ?: tripDayDao.getByIdIncludingDeleted(item.tripDayId)?.tripId
+            require(dayTrip == bundle.trip.id) { "Itinerary item has no matching trip day" }
+        }
+        for (entry in bundle.expenses) require(expenseDao.getByIdIncludingDeleted(entry.id)?.tripId.let { it == null || it == bundle.trip.id }) { "Expense belongs to another trip" }
+        for (entry in bundle.packingItems) require(packingItemDao.getByIdIncludingDeleted(entry.id)?.tripId.let { it == null || it == bundle.trip.id }) { "Packing item belongs to another trip" }
+        for (entry in bundle.tripNotes) require(tripNoteDao.getByIdIncludingDeleted(entry.id)?.tripId.let { it == null || it == bundle.trip.id }) { "Note belongs to another trip" }
+        for (entry in bundle.attachments) require(attachmentDao.getByIdIncludingDeleted(entry.id)?.tripId.let { it == null || it == bundle.trip.id }) { "Attachment belongs to another trip" }
+        for (entry in bundle.itemAttachmentLinks) {
+            require(itineraryItemAttachmentLinkDao.getByIdIncludingDeleted(entry.id)?.tripId.let { it == null || it == bundle.trip.id }) { "Link belongs to another trip" }
+            val itemTrip = bundle.itineraryItems.firstOrNull { it.id == entry.itineraryItemId }?.tripId
+                ?: itineraryItemDao.getByIdIncludingDeleted(entry.itineraryItemId)?.tripId
+            val attachmentTrip = bundle.attachments.firstOrNull { it.id == entry.attachmentId }?.tripId
+                ?: attachmentDao.getByIdIncludingDeleted(entry.attachmentId)?.tripId
+            require(itemTrip == bundle.trip.id && attachmentTrip == bundle.trip.id) { "Attachment link references missing or unrelated records" }
+        }
+
         var applied = 0
         var skipped = 0
 
@@ -102,7 +128,7 @@ class TripSyncBundleApplier @Inject constructor(
         if (!SyncMergePolicy.shouldApplyIncoming(local, payload.toSyncRecord())) return false
 
         val existing = tripDao.getTripByIdIncludingDeleted(payload.id)
-        val resolvedCoverImageUri = materializeTripCover(context, payload)
+        val resolvedCoverImageUri = materializeTripCover(context, payload, existing?.coverImageUri)
         tripDao.insertTrip(
             payload.toEntity(
                 createdAt = existing?.createdAt ?: payload.metadata.updatedAt,
@@ -169,27 +195,32 @@ class TripSyncBundleApplier @Inject constructor(
 
     private suspend fun applyAttachment(payload: SyncAttachmentPayload): Boolean {
         val localEntity = attachmentDao.getByIdIncludingDeleted(payload.id)
-        val local = localEntity?.toSyncRecord(contentHash = hashFileSha256(File(context.filesDir, localEntity.localPath)))
+        val local = localEntity?.toSyncRecord(contentHash = if (localEntity.deletedAt != null) null else hashFileSha256(File(context.filesDir, localEntity.localPath)))
         if (!SyncMergePolicy.shouldApplyIncoming(local, payload.toSyncRecord())) return false
 
-        val targetFile = File(context.filesDir, payload.localPath)
-        if (payload.metadata.deletedAt != null) {
-            if (targetFile.exists()) {
-                targetFile.delete()
+        if (payload.metadata.deletedAt == null && payload.contentBase64 == null) {
+            require(localEntity != null && payload.contentHash != null && local?.contentHash == payload.contentHash) {
+                "The other device is missing file content for ${payload.displayName}. Restore the file there and retry."
             }
-        } else if (payload.contentBase64 != null) {
-            targetFile.parentFile?.mkdirs()
-            val decoded = Base64.getDecoder().decode(payload.contentBase64)
-            val incomingHash = payload.contentHash
-            if (incomingHash != null) {
-                require(hashBytesSha256(decoded) == incomingHash) {
-                    "Attachment content hash mismatch for ${payload.id}"
-                }
-            }
-            targetFile.writeBytes(decoded)
         }
+        // Immutable content files keep Room rollback from corrupting an older saved file.
+        // Tombstones hide rows; physical cleanup must happen outside the merge transaction.
+        val resolvedPath = if (payload.metadata.deletedAt == null && payload.contentBase64 != null) {
+            val decoded = Base64.getDecoder().decode(payload.contentBase64)
+            val relativePath = "attachments/sync/${hashBytesSha256(payload.id.toByteArray())}/${hashBytesSha256(decoded)}"
+            val targetFile = File(context.filesDir, relativePath)
+            targetFile.parentFile?.mkdirs()
+            if (!targetFile.exists()) {
+                val staging = File.createTempFile("sync-", ".tmp", targetFile.parentFile)
+                try {
+                    staging.writeBytes(decoded)
+                    check(staging.renameTo(targetFile)) { "Unable to save attachment" }
+                } finally { staging.delete() }
+            }
+            relativePath
+        } else localEntity?.localPath ?: payload.localPath
 
-        val entity = payload.toEntity()
+        val entity = payload.toEntity().copy(localPath = resolvedPath)
         if (localEntity == null) {
             attachmentDao.insert(entity)
         } else {
@@ -199,9 +230,10 @@ class TripSyncBundleApplier @Inject constructor(
     }
 }
 
-private fun materializeTripCover(context: Context, payload: SyncTripPayload): String? {
+private fun materializeTripCover(context: Context, payload: SyncTripPayload, existingUri: String?): String? {
     val coverDir = File(context.filesDir, "trip-covers").apply { mkdirs() }
-    val targetFile = File(coverDir, "${payload.id}.jpg")
+    val coverKey = hashBytesSha256(payload.id.toByteArray())
+    val targetFile = File(coverDir, "$coverKey-${payload.coverImageContentBase64?.let { hashBytesSha256(Base64.getDecoder().decode(it)) } ?: "missing"}.jpg")
 
     if (payload.coverImageContentBase64 != null) {
         val decoded = Base64.getDecoder().decode(payload.coverImageContentBase64)
@@ -210,23 +242,23 @@ private fun materializeTripCover(context: Context, payload: SyncTripPayload): St
                 "Trip cover content hash mismatch for ${payload.id}"
             }
         }
-        targetFile.writeBytes(decoded)
+        if (!targetFile.exists()) {
+            val staging = File.createTempFile("cover-", ".tmp", coverDir)
+            try { staging.writeBytes(decoded); check(staging.renameTo(targetFile)) { "Unable to save trip cover" } }
+            finally { staging.delete() }
+        }
         return targetFile.toURI().toString()
     }
 
     if (payload.coverImageUri.isNullOrBlank()) {
-        if (targetFile.exists()) {
-            targetFile.delete()
-        }
         return null
     }
 
     return when {
         payload.coverImageUri.startsWith("http://") ||
-            payload.coverImageUri.startsWith("https://") ||
-            payload.coverImageUri.startsWith("content://") -> payload.coverImageUri
+            payload.coverImageUri.startsWith("https://") -> payload.coverImageUri
         targetFile.exists() -> targetFile.toURI().toString()
-        else -> null
+        else -> existingUri
     }
 }
 

@@ -210,7 +210,7 @@ class TripSyncBundleApplierTest {
 
         val result = applier.applyBundleInternal(bundle)
 
-        val coverFile = File(filesDir, "trip-covers/trip-1.jpg")
+        val coverFile = File(java.net.URI(insertedTrip.captured.coverImageUri!!))
         assertEquals(1, result.appliedRecords)
         assertTrue(coverFile.exists())
         assertEquals("cover-image", coverFile.readText())

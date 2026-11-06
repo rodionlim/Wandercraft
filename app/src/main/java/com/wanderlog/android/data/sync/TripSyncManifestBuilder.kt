@@ -1,5 +1,11 @@
 package com.wanderlog.android.data.sync
 
+import androidx.room.withTransaction
+import com.wanderlog.android.data.local.WanderlogDatabase
+import com.wanderlog.android.data.local.dao.TripNoteDao
+import com.wanderlog.android.data.local.dao.ItineraryItemAttachmentLinkDao
+import com.wanderlog.android.domain.model.sync.SyncEntityType
+import com.wanderlog.android.domain.model.sync.TripSyncRecord
 import android.content.Context
 import com.wanderlog.android.data.local.dao.AttachmentDao
 import com.wanderlog.android.data.local.dao.ExpenseDao
@@ -17,6 +23,9 @@ import javax.inject.Singleton
 
 @Singleton
 class TripSyncManifestBuilder @Inject constructor(
+    private val database: WanderlogDatabase,
+    private val tripNoteDao: TripNoteDao,
+    private val linkDao: ItineraryItemAttachmentLinkDao,
     private val tripDao: TripDao,
     private val tripDayDao: TripDayDao,
     private val itineraryItemDao: ItineraryItemDao,
@@ -29,7 +38,9 @@ class TripSyncManifestBuilder @Inject constructor(
     suspend fun buildManifest(
         tripId: String,
         generatedAt: Long = System.currentTimeMillis()
-    ): TripSyncManifest? {
+    ): TripSyncManifest? = database.withTransaction { buildSnapshot(tripId, generatedAt) }
+
+    private suspend fun buildSnapshot(tripId: String, generatedAt: Long): TripSyncManifest? {
         val trip = tripDao.getTripByIdIncludingDeleted(tripId) ?: return null
 
         if (trip.deletedAt != null) {
@@ -46,14 +57,18 @@ class TripSyncManifestBuilder @Inject constructor(
         val packingItems = packingItemDao.getItemsForTripForSync(tripId)
         val attachments = attachmentDao.getAttachmentsForTripForSync(tripId)
 
+        val notes = tripNoteDao.getNotesForTripForSync(tripId)
+        val links = linkDao.getLinksForTripForSync(tripId)
         val records = buildList {
+            addAll(notes.map { it.toSyncRecord() })
+            addAll(links.map { TripSyncRecord(SyncEntityType.ITEM_ATTACHMENT_LINK, it.id, it.updatedAt, it.deletedAt, it.lastModifiedByDeviceId) })
             add(trip.toSyncRecord())
             addAll(tripDays.map { it.toSyncRecord() })
             addAll(itineraryItems.map { it.toSyncRecord() })
             addAll(expenses.map { it.toSyncRecord() })
             addAll(packingItems.map { it.toSyncRecord() })
             addAll(attachments.map { attachment ->
-                attachment.toSyncRecord(contentHash = hashAttachment(attachment))
+                attachment.toSyncRecord(contentHash = if (attachment.deletedAt != null) null else hashAttachment(attachment))
             })
         }
 

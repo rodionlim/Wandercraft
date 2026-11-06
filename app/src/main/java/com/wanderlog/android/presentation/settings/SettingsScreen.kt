@@ -5,16 +5,19 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +54,7 @@ fun SettingsScreen(
     var budgetCurrencyMenuExpanded by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
     var showOpenAiKeyHelp by remember { mutableStateOf(false) }
+    var showGeminiKeyHelp by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.saved) {
         if (state.saved) onBack()
@@ -61,32 +65,70 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .imePadding()
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text("API Keys", style = MaterialTheme.typography.titleMedium)
 
-            val selectedOption = OpenAiModels.options.firstOrNull { it.id == state.openAiModel }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("OpenAI Model", style = MaterialTheme.typography.bodyMedium)
+                Text("AI Provider", style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AiProvider.entries.forEach { provider ->
+                        FilterChip(
+                            selected = state.aiProvider == provider,
+                            onClick = {
+                                modelMenuExpanded = false
+                                parsingModelMenuExpanded = false
+                                viewModel.onAiProviderChange(provider)
+                            },
+                            label = { Text(provider.label) }
+                        )
+                    }
+                }
+            }
+
+            val isGemini = state.aiProvider == AiProvider.GEMINI
+            val activeModelOptions = if (isGemini) GeminiModels.options else OpenAiModels.options
+            val activeParsingOptions = if (isGemini) GeminiModels.parsingOptions else OpenAiModels.parsingOptions
+            val selectedModelId = if (isGemini) state.geminiModel else state.openAiModel
+            val selectedParsingModelId = if (isGemini) state.geminiParsingModel else state.openAiParsingModel
+            val selectedModelLabel = if (isGemini) {
+                GeminiModels.labelFor(selectedModelId)
+            } else {
+                OpenAiModels.labelFor(selectedModelId)
+            }
+            val selectedParsingModelLabel = if (isGemini) {
+                GeminiModels.labelFor(selectedParsingModelId)
+            } else {
+                OpenAiModels.labelFor(selectedParsingModelId)
+            }
+
+            val selectedOption = activeModelOptions.firstOrNull { it.id == selectedModelId }
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${state.aiProvider.label} Model", style = MaterialTheme.typography.bodyMedium)
                 Box(modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(
                         onClick = { modelMenuExpanded = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("${OpenAiModels.labelFor(state.openAiModel)} (${state.openAiModel})")
+                        Text("$selectedModelLabel ($selectedModelId)")
                     }
 
                     DropdownMenu(
-                    expanded = modelMenuExpanded,
-                    onDismissRequest = { modelMenuExpanded = false }
+                        expanded = modelMenuExpanded,
+                        onDismissRequest = { modelMenuExpanded = false }
                     ) {
-                        OpenAiModels.options.forEach { option ->
+                        activeModelOptions.forEach { option ->
                             DropdownMenuItem(
                                 text = { Text("${option.label} (${option.id})") },
                                 onClick = {
-                                    viewModel.onOpenAiModelChange(option.id)
+                                    if (isGemini) {
+                                        viewModel.onGeminiModelChange(option.id)
+                                    } else {
+                                        viewModel.onOpenAiModelChange(option.id)
+                                    }
                                     modelMenuExpanded = false
                                 }
                             )
@@ -101,7 +143,7 @@ fun SettingsScreen(
                 )
             }
 
-            val selectedParsingOption = OpenAiModels.parsingOptions.firstOrNull { it.id == state.openAiParsingModel }
+            val selectedParsingOption = activeParsingOptions.firstOrNull { it.id == selectedParsingModelId }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Booking Image/PDF Parsing Model", style = MaterialTheme.typography.bodyMedium)
                 Box(modifier = Modifier.fillMaxWidth()) {
@@ -109,18 +151,22 @@ fun SettingsScreen(
                         onClick = { parsingModelMenuExpanded = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("${OpenAiModels.labelFor(state.openAiParsingModel)} (${state.openAiParsingModel})")
+                        Text("$selectedParsingModelLabel ($selectedParsingModelId)")
                     }
 
                     DropdownMenu(
                         expanded = parsingModelMenuExpanded,
                         onDismissRequest = { parsingModelMenuExpanded = false }
                     ) {
-                        OpenAiModels.parsingOptions.forEach { option ->
+                        activeParsingOptions.forEach { option ->
                             DropdownMenuItem(
                                 text = { Text("${option.label} (${option.id})") },
                                 onClick = {
-                                    viewModel.onOpenAiParsingModelChange(option.id)
+                                    if (isGemini) {
+                                        viewModel.onGeminiParsingModelChange(option.id)
+                                    } else {
+                                        viewModel.onOpenAiParsingModelChange(option.id)
+                                    }
                                     parsingModelMenuExpanded = false
                                 }
                             )
@@ -135,22 +181,41 @@ fun SettingsScreen(
                 )
             }
 
-            OutlinedTextField(
-                value = state.openAiKey,
-                onValueChange = viewModel::onOpenAiKeyChange,
-                label = { Text("OpenAI API Key") },
-                modifier = Modifier.fillMaxWidth(),
-                visualTransformation = PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { showOpenAiKeyHelp = true }) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.HelpOutline,
-                            contentDescription = "How to create an OpenAI API key"
-                        )
-                    }
-                },
-                singleLine = true
-            )
+            if (isGemini) {
+                OutlinedTextField(
+                    value = state.geminiKey,
+                    onValueChange = viewModel::onGeminiKeyChange,
+                    label = { Text("Gemini API Key") },
+                    modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showGeminiKeyHelp = true }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.HelpOutline,
+                                contentDescription = "How to create a Gemini API key"
+                            )
+                        }
+                    },
+                    singleLine = true
+                )
+            } else {
+                OutlinedTextField(
+                    value = state.openAiKey,
+                    onValueChange = viewModel::onOpenAiKeyChange,
+                    label = { Text("OpenAI API Key") },
+                    modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showOpenAiKeyHelp = true }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.HelpOutline,
+                                contentDescription = "How to create an OpenAI API key"
+                            )
+                        }
+                    },
+                    singleLine = true
+                )
+            }
 
             OutlinedTextField(
                 value = state.mapsKey,
@@ -261,6 +326,18 @@ fun SettingsScreen(
                 uriHandler.openUri("https://platform.openai.com/api-keys")
             },
             onDismiss = { showOpenAiKeyHelp = false }
+        )
+    }
+
+    if (showGeminiKeyHelp) {
+        GeminiApiKeyHelpDialog(
+            title = "Create your Gemini API key",
+            confirmLabel = "Open AI Studio",
+            dismissLabel = "Close",
+            onConfirm = {
+                uriHandler.openUri("https://aistudio.google.com/apikey")
+            },
+            onDismiss = { showGeminiKeyHelp = false }
         )
     }
 }

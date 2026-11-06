@@ -1,8 +1,7 @@
 package com.wanderlog.android.data.local.dao
 
 import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
+import androidx.room.Upsert
 import androidx.room.Query
 import com.wanderlog.android.data.local.entity.TripDayEntity
 import kotlinx.coroutines.flow.Flow
@@ -46,7 +45,7 @@ interface TripDayDao {
         @Query("SELECT * FROM trip_days WHERE trip_id = :tripId ORDER BY day_number ASC")
         suspend fun getDaysForTripForSync(tripId: String): List<TripDayEntity>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     suspend fun insertAll(days: List<TripDayEntity>)
 
     @Query("DELETE FROM trip_days WHERE trip_id = :tripId")

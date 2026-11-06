@@ -29,6 +29,13 @@ import com.wanderlog.android.domain.model.sync.TripSyncBundle
 import com.wanderlog.android.domain.model.sync.TripSyncManifest
 import com.wanderlog.android.domain.model.sync.TripSyncRecord
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -72,7 +79,8 @@ data class NearbyTripSyncState(
 data class NearbySyncControlMessage(
     val type: String,
     val tripId: String,
-    val manifest: TripSyncManifest? = null
+    val manifest: TripSyncManifest? = null,
+    val supportsApplyConfirmation: Boolean = true
 )
 
 @Singleton
@@ -83,7 +91,28 @@ class NearbyTripSyncTransport @Inject constructor(
     private val moshi: Moshi
 ) {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var session = 0
+    private var connectedEndpointId: String? = null
+    private val sentManifests = mutableSetOf<String>()
+    private var peerSupportsApplyConfirmation = false
+    private var awaitingIncomingBundle = false
+    private var awaitingOutgoingTransfer = false
+    private var awaitingApplyConfirmation = false
+    private var operationMutex = Mutex()
+    private var timeoutJob: Job? = null
+
+    fun clearError() { _state.update { it.copy(errorMessage = null) } }
+
+    private fun watchForTimeout() {
+        timeoutJob?.cancel()
+        timeoutJob = scope.launch {
+            delay(120_000)
+            if (state.value.isBusy) {
+                reportError("Sync timed out. Keep both devices awake, then stop and retry the session", IllegalStateException("No transfer progress for two minutes"))
+            }
+        }
+    }
     private val connectionsClient: ConnectionsClient by lazy(LazyThreadSafetyMode.NONE) {
         Nearby.getConnectionsClient(context)
     }
@@ -125,7 +154,7 @@ class NearbyTripSyncTransport @Inject constructor(
             connectionsClient.startAdvertising(
                 buildLocalEndpointName(),
                 SERVICE_ID,
-                connectionLifecycleCallback,
+                connectionLifecycleCallback(session),
                 AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
             ).await()
         }.onSuccess {
@@ -156,7 +185,7 @@ class NearbyTripSyncTransport @Inject constructor(
         runCatching {
             connectionsClient.startDiscovery(
                 SERVICE_ID,
-                endpointDiscoveryCallback,
+                endpointDiscoveryCallback(session),
                 DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
             ).await()
         }.onSuccess {
@@ -168,13 +197,16 @@ class NearbyTripSyncTransport @Inject constructor(
     }
 
     suspend fun requestConnection(peer: NearbySyncPeer) {
+        if (state.value.mode != NearbySyncMode.DISCOVERING || state.value.isBusy) return
+        clearError()
+        watchForTimeout()
         knownEndpointNames[peer.endpointId] = peer.endpointName
         _state.update { it.copy(statusMessage = "Requesting connection to ${peer.endpointName}", isBusy = true) }
         runCatching {
             connectionsClient.requestConnection(
                 buildLocalEndpointName(),
                 peer.endpointId,
-                connectionLifecycleCallback
+                connectionLifecycleCallback(session)
             ).await()
         }.onFailure { error ->
             reportError("Unable to connect to ${peer.endpointName}", error)
@@ -183,6 +215,16 @@ class NearbyTripSyncTransport @Inject constructor(
     }
 
     fun stop() {
+        session++
+        scope.cancel()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        operationMutex = Mutex()
+        connectedEndpointId = null
+        sentManifests.clear()
+        peerSupportsApplyConfirmation = false
+        awaitingIncomingBundle = false
+        awaitingApplyConfirmation = false
+        awaitingOutgoingTransfer = false
         runCatching {
             connectionsClient.stopAdvertising()
             connectionsClient.stopDiscovery()
@@ -198,6 +240,7 @@ class NearbyTripSyncTransport @Inject constructor(
         outgoingBundleFiles.clear()
         _state.update {
             it.copy(
+                tripId = null,
                 mode = NearbySyncMode.IDLE,
                 discoveredPeers = emptyList(),
                 connectedPeerName = null,
@@ -212,10 +255,11 @@ class NearbyTripSyncTransport @Inject constructor(
         tripId: String,
         allowEmptyLocal: Boolean = false
     ) {
-        val manifest = if (allowEmptyLocal) {
-            coordinator.buildLocalManifestOrEmpty(tripId)
-        } else {
-            coordinator.buildLocalManifest(tripId) ?: return
+        if (!sentManifests.add(endpointId)) return
+        val manifest = withContext(Dispatchers.IO) {
+            if (allowEmptyLocal) coordinator.buildLocalManifestOrEmpty(tripId)
+            else coordinator.buildLocalManifest(tripId)
+                ?: error("The hosted trip no longer exists. Open another trip and retry.")
         }
         val message = NearbySyncControlMessage(
             type = CONTROL_TYPE_MANIFEST,
@@ -223,18 +267,28 @@ class NearbyTripSyncTransport @Inject constructor(
             manifest = manifest
         )
         val bytes = serializeOutgoingControlPayload(message, controlPayloadAdapter).encodeToByteArray()
+        require(bytes.size <= ConnectionsClient.MAX_BYTES_DATA_SIZE) {
+            "This trip has too many records for the sync manifest."
+        }
         connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes)).await()
         appendLog("Sent manifest to ${knownEndpointNames[endpointId] ?: endpointId}")
     }
 
     private suspend fun sendLocalBundle(endpointId: String, tripId: String) {
-        val bundle = coordinator.buildLocalBundle(tripId) ?: return
+        val bundle = withContext(Dispatchers.IO) { coordinator.buildLocalBundle(tripId) }
+            ?: error("The trip was removed before it could be sent")
         val syncDir = File(context.cacheDir, "trip-sync/outgoing").apply { mkdirs() }
-        val bundleFile = File.createTempFile("$tripId-", ".json", syncDir)
-        bundleFile.writeText(bundleAdapter.toJson(bundle))
+        val bundleFile = withContext(Dispatchers.IO) {
+            File.createTempFile("bundle-", ".json", syncDir).apply { writeText(bundleAdapter.toJson(bundle)) }
+        }
         val payload = Payload.fromFile(bundleFile)
         outgoingBundleFiles[payload.id] = bundleFile
-        connectionsClient.sendPayload(endpointId, payload).await()
+        try {
+            connectionsClient.sendPayload(endpointId, payload).await()
+        } catch (error: Exception) {
+            outgoingBundleFiles.remove(payload.id)?.delete()
+            throw error
+        }
         if (bundle.trip.metadata.deletedAt != null) {
             appendLog("Sent deleted-trip tombstone to ${knownEndpointNames[endpointId] ?: endpointId}")
         } else {
@@ -253,11 +307,13 @@ class NearbyTripSyncTransport @Inject constructor(
 
         val tripId = state.value.tripId
         if (tripId != null && tripId != remoteTripId) {
-            appendLog("Ignored manifest for $remoteTripId")
-            return
+            error("The other device selected a different trip. Stop and join the intended trip.")
         }
 
         val normalizedManifest = manifest.withNormalizedTripId(remoteTripId)
+        require(normalizedManifest.protocolVersion == TripSyncManifest.CURRENT_PROTOCOL_VERSION) {
+            "These app versions cannot sync (this device: ${TripSyncManifest.CURRENT_PROTOCOL_VERSION}, other device: ${normalizedManifest.protocolVersion}). Update both devices to the same latest app version and retry."
+        }
 
         if (tripId == null) {
             _state.update {
@@ -268,8 +324,10 @@ class NearbyTripSyncTransport @Inject constructor(
             }
         }
 
-        val localManifest = coordinator.buildLocalManifest(remoteTripId)
-        val plan = coordinator.compareWithRemoteManifestOrEmpty(normalizedManifest)
+        // Always reply, including when the joining device already owns this trip.
+        // Sending at most once avoids manifest ping-pong between peers.
+        sendLocalManifest(endpointId, remoteTripId, allowEmptyLocal = true)
+        val plan = withContext(Dispatchers.IO) { coordinator.compareWithRemoteManifestOrEmpty(normalizedManifest) }
         val remoteTripRecord = normalizedManifest.records.firstOrNull { record ->
             record.entityType == com.wanderlog.android.domain.model.sync.SyncEntityType.TRIP &&
                 record.id == remoteTripId
@@ -283,7 +341,12 @@ class NearbyTripSyncTransport @Inject constructor(
             append(", unchanged ")
             append(plan.unchangedKeys.size)
         }
-        _state.update { it.copy(lastSyncSummary = summary, statusMessage = summary) }
+        awaitingIncomingBundle = plan.recordsToPull.isNotEmpty()
+        awaitingOutgoingTransfer = plan.recordsToPush.isNotEmpty()
+        awaitingApplyConfirmation = awaitingOutgoingTransfer && peerSupportsApplyConfirmation
+        _state.update { it.copy(lastSyncSummary = summary, statusMessage = summary,
+            isBusy = awaitingIncomingBundle || awaitingApplyConfirmation || awaitingOutgoingTransfer) }
+        watchForTimeout()
         appendLog(summary)
 
         if (remoteTripRecord?.deletedAt != null) {
@@ -292,57 +355,33 @@ class NearbyTripSyncTransport @Inject constructor(
 
         if (plan.recordsToPush.isNotEmpty()) {
             sendLocalBundle(endpointId, remoteTripId)
-        } else if (localManifest == null && plan.recordsToPull.isNotEmpty()) {
-            sendLocalManifest(endpointId, remoteTripId, allowEmptyLocal = true)
-            appendLog("Requested bundle for $remoteTripId")
+        } else if (plan.recordsToPull.isNotEmpty()) {
+            appendLog("Waiting for the other device's changes")
         } else if (plan.recordsToPull.isEmpty()) {
             appendLog("Trips are already in sync")
         }
     }
 
     private suspend fun handleReceivedBundle(endpointId: String, payload: Payload) {
-        val file = copyIncomingPayloadToCache(payload)
-        if (file == null || !file.exists()) {
-            appendLog("Received bundle payload with no file data")
-            return
-        }
-
-        val bundle = runCatching {
-            parseIncomingTripSyncBundle(
-                payload = file.readText(),
-                bundleAdapter = bundleAdapter,
-                bundlePayloadAdapter = bundlePayloadAdapter
-            )
-        }
-            .getOrElse { error ->
-                reportError("Unable to read incoming bundle", error)
-                null
-            }
-        if (bundle == null) {
-            appendLog("Unable to parse incoming sync bundle")
-            file.delete()
+        var file: File? = null
+        try {
+            file = withContext(Dispatchers.IO) { copyIncomingPayloadToCache(payload) }
+                ?: error("Received bundle has no readable file data")
+            val bundle = withContext(Dispatchers.IO) {
+                parseIncomingTripSyncBundle(file.readText(), bundleAdapter, bundlePayloadAdapter)
+            } ?: error("Unable to parse incoming sync bundle")
+            require(bundle.trip.id == state.value.tripId) { "Received bundle for a different trip" }
+            val result = withContext(Dispatchers.IO) { coordinator.applyRemoteBundle(bundle) }
+            val summary = "Applied ${result.appliedRecords} remote records, skipped ${result.skippedRecords}"
+            awaitingIncomingBundle = false
+            _state.update { it.copy(lastSyncSummary = summary, statusMessage = summary, isBusy = awaitingApplyConfirmation || awaitingOutgoingTransfer) }
+            appendLog(summary)
+            val ack = serializeOutgoingControlPayload(NearbySyncControlMessage("applied", bundle.trip.id), controlPayloadAdapter)
+            connectionsClient.sendPayload(endpointId, Payload.fromBytes(ack.encodeToByteArray())).await()
+        } finally {
+            file?.delete()
             deleteIncomingPayload(payload)
-            return
         }
-
-        val result = coordinator.applyRemoteBundle(bundle)
-        val summary = if (bundle.trip.metadata.deletedAt != null) {
-            "Applied remote trip deletion"
-        } else {
-            "Applied ${result.appliedRecords} remote records, skipped ${result.skippedRecords}"
-        }
-        _state.update {
-            it.copy(
-                tripId = bundle.trip.id,
-                lastSyncSummary = summary,
-                statusMessage = summary,
-                isBusy = false
-            )
-        }
-        appendLog("Received bundle from ${knownEndpointNames[endpointId] ?: endpointId}")
-        appendLog(summary)
-        file.delete()
-        deleteIncomingPayload(payload)
     }
 
     private fun copyIncomingPayloadToCache(payload: Payload): File? {
@@ -352,12 +391,12 @@ class NearbyTripSyncTransport @Inject constructor(
 
         return runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val uri = payloadFile.asUri() ?: return null
+                val uri = payloadFile.asUri() ?: error("Incoming file URI is unavailable")
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(targetFile).use { output -> input.copyTo(output) }
-                } ?: return null
+                } ?: error("Incoming file could not be opened")
             } else {
-                val sourceFile = payloadFile.asJavaFile() ?: return null
+                val sourceFile = payloadFile.asJavaFile() ?: error("Incoming file is unavailable")
                 sourceFile.inputStream().use { input ->
                     FileOutputStream(targetFile).use { output -> input.copyTo(output) }
                 }
@@ -391,6 +430,7 @@ class NearbyTripSyncTransport @Inject constructor(
     }
 
     private fun reportError(message: String, throwable: Throwable) {
+        if (throwable is CancellationException) throw throwable
         val fullMessage = throwable.message?.let { "$message: $it" } ?: message
         appendLog(fullMessage)
         _state.update { it.copy(errorMessage = fullMessage, statusMessage = fullMessage, isBusy = false) }
@@ -408,8 +448,9 @@ class NearbyTripSyncTransport @Inject constructor(
         return "Wanderlog $model $suffix"
     }
 
-    private val endpointDiscoveryCallback = object : EndpointDiscoveryCallback() {
+    private fun endpointDiscoveryCallback(generation: Int) = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
+            if (generation != session) return
             val peer = NearbySyncPeer(endpointId = endpointId, endpointName = info.endpointName)
             discoveredPeers[endpointId] = peer
             knownEndpointNames[endpointId] = info.endpointName
@@ -418,18 +459,22 @@ class NearbyTripSyncTransport @Inject constructor(
         }
 
         override fun onEndpointLost(endpointId: String) {
-            appendLog("Lost ${knownEndpointNames[endpointId] ?: endpointId}")
-            clearPeer(endpointId)
+            if (generation != session) return
+            if (connectedEndpointId != endpointId) {
+                appendLog("Lost ${knownEndpointNames[endpointId] ?: endpointId}")
+                clearPeer(endpointId)
+            }
         }
     }
 
-    private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
+    private fun connectionLifecycleCallback(generation: Int) = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
+            if (generation != session) return
             knownEndpointNames[endpointId] = connectionInfo.endpointName
             appendLog("Connection initiated with ${connectionInfo.endpointName}")
             scope.launch {
                 runCatching {
-                    connectionsClient.acceptConnection(endpointId, payloadCallback).await()
+                    connectionsClient.acceptConnection(endpointId, payloadCallback(generation)).await()
                 }.onFailure { error ->
                     reportError("Unable to accept connection", error)
                 }
@@ -437,14 +482,20 @@ class NearbyTripSyncTransport @Inject constructor(
         }
 
         override fun onConnectionResult(endpointId: String, resolution: ConnectionResolution) {
+            if (generation != session) return
             if (resolution.status.statusCode == ConnectionsStatusCodes.STATUS_OK) {
+                connectedEndpointId = endpointId
+                connectionsClient.stopAdvertising()
+                connectionsClient.stopDiscovery()
+                discoveredPeers.clear()
                 val endpointName = knownEndpointNames[endpointId] ?: endpointId
+                watchForTimeout()
                 _state.update {
                     it.copy(
                         mode = NearbySyncMode.CONNECTED,
                         connectedPeerName = endpointName,
-                        statusMessage = "Connected to $endpointName",
-                        isBusy = false,
+                        statusMessage = "Connected to $endpointName; comparing trips",
+                        isBusy = true,
                         discoveredPeers = discoveredPeers.values.toList()
                     )
                 }
@@ -452,7 +503,7 @@ class NearbyTripSyncTransport @Inject constructor(
                 scope.launch {
                     val tripId = state.value.tripId
                     if (tripId != null) {
-                        runCatching { sendLocalManifest(endpointId, tripId) }
+                        runCatching { operationMutex.withLock { sendLocalManifest(endpointId, tripId) } }
                             .onFailure { error -> reportError("Unable to send manifest", error) }
                     }
                 }
@@ -464,9 +515,10 @@ class NearbyTripSyncTransport @Inject constructor(
         }
 
         override fun onDisconnected(endpointId: String) {
+            if (generation != session) return
             val endpointName = knownEndpointNames[endpointId] ?: endpointId
             appendLog("Disconnected from $endpointName")
-            clearPeer(endpointId)
+            stop()
             _state.update {
                 it.copy(
                     mode = NearbySyncMode.IDLE,
@@ -478,23 +530,31 @@ class NearbyTripSyncTransport @Inject constructor(
         }
     }
 
-    private val payloadCallback = object : PayloadCallback() {
+    private fun payloadCallback(generation: Int) = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
+            if (generation != session || connectedEndpointId != endpointId) return
             when (payload.type) {
                 Payload.Type.BYTES -> {
                     val bytes = payload.asBytes() ?: return
                     scope.launch {
                         runCatching {
+                            operationMutex.withLock {
                             val message = parseIncomingControlPayload(
                                 payload = bytes.decodeToString(),
                                 controlPayloadAdapter = controlPayloadAdapter
                             )
                             if (message?.type == CONTROL_TYPE_MANIFEST && message.manifest != null) {
+                                peerSupportsApplyConfirmation = message.supportsApplyConfirmation
                                 handleReceivedManifest(
                                     endpointId = endpointId,
                                     manifest = message.manifest,
                                     controlTripId = message.tripId
                                 )
+                            } else if (message?.type == "applied" && message.tripId == state.value.tripId) {
+                                awaitingApplyConfirmation = false
+                                _state.update { it.copy(isBusy = awaitingIncomingBundle || awaitingOutgoingTransfer, statusMessage = if (awaitingIncomingBundle) "Changes saved on the other device; waiting for its changes" else "Other device confirmed changes saved") }
+                                appendLog("Other device confirmed changes saved")
+                            } else error("Unrecognized sync message. Update both devices and retry.")
                             }
                         }.onFailure { error ->
                             reportError("Unable to handle control payload", error)
@@ -510,14 +570,23 @@ class NearbyTripSyncTransport @Inject constructor(
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
+            if (generation != session) return
+            if (update.status == PayloadTransferUpdate.Status.IN_PROGRESS) watchForTimeout()
             when (update.status) {
                 PayloadTransferUpdate.Status.SUCCESS -> {
-                    outgoingBundleFiles.remove(update.payloadId)?.delete()
+                    outgoingBundleFiles.remove(update.payloadId)?.let { file ->
+                        file.delete()
+                        awaitingOutgoingTransfer = false
+                        _state.update { it.copy(isBusy = awaitingIncomingBundle || awaitingApplyConfirmation) }
+                        if (!peerSupportsApplyConfirmation) {
+                            _state.update { it.copy(isBusy = awaitingIncomingBundle, statusMessage = "Bundle delivered; check the other device to confirm it was saved") }
+                        }
+                    }
                     val pending = incomingFilePayloads.remove(update.payloadId)
                     if (pending != null) {
                         scope.launch {
                             runCatching {
-                                handleReceivedBundle(endpointId = pending.first, payload = pending.second)
+                                operationMutex.withLock { handleReceivedBundle(endpointId = pending.first, payload = pending.second) }
                             }.onFailure { error ->
                                 reportError("Unable to apply incoming bundle", error)
                             }
@@ -529,8 +598,7 @@ class NearbyTripSyncTransport @Inject constructor(
                 PayloadTransferUpdate.Status.CANCELED -> {
                     outgoingBundleFiles.remove(update.payloadId)?.delete()
                     incomingFilePayloads.remove(update.payloadId)?.second?.let(::deleteIncomingPayload)
-                    appendLog("Payload transfer failed")
-                    _state.update { it.copy(isBusy = false) }
+                    reportError("Transfer interrupted. Stop and retry with both devices awake", IllegalStateException("Transfer failed or was canceled"))
                 }
             }
         }
@@ -570,7 +638,8 @@ internal fun parseIncomingControlPayload(
     return NearbySyncControlMessage(
         type = type,
         tripId = controlTripId ?: manifest?.tripId ?: "",
-        manifest = manifest
+        manifest = manifest,
+        supportsApplyConfirmation = payloadMap["supportsApplyConfirmation"] == true
     )
 }
 
@@ -581,7 +650,8 @@ internal fun serializeOutgoingControlPayload(
     val payload = linkedMapOf<String, Any?>(
         "type" to message.type,
         "tripId" to message.tripId,
-        "manifest" to message.manifest?.toOutgoingControlPayloadMap()
+        "manifest" to message.manifest?.toOutgoingControlPayloadMap(),
+        "supportsApplyConfirmation" to message.supportsApplyConfirmation
     )
     return controlPayloadAdapter.toJson(payload)
 }

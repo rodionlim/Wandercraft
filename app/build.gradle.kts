@@ -128,3 +128,14 @@ dependencies {
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.compose.ui.test.junit4)
 }
+
+// Connected tests may reinstall apps and change device data. Never run on a personal phone.
+tasks.configureEach {
+    if (name.startsWith("connected") && name.endsWith("AndroidTest")) {
+        doFirst {
+            check(providers.gradleProperty("disposableDevice").orNull == "true") {
+                "Device tests require a disposable emulator/device. Re-run only there with -PdisposableDevice=true."
+            }
+        }
+    }
+}
