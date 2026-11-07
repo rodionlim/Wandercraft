@@ -21,8 +21,10 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,8 +32,10 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.wanderlog.android.core.ui.component.ConfirmDialog
@@ -61,9 +66,12 @@ fun ItemAttachmentsScreen(
     val state by viewModel.state.collectAsState()
     val attachments by viewModel.attachments.collectAsState()
     var pendingRemoval by remember { mutableStateOf<ItineraryItemAttachment?>(null) }
+    var editingAttachment by remember { mutableStateOf<Attachment?>(null) }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let(viewModel::importAttachment)
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            viewModel.importAttachments(uris)
+        }
     }
 
     Scaffold(
@@ -103,14 +111,24 @@ fun ItemAttachmentsScreen(
                     Text("Adding attachment...")
                 }
 
-                attachments.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                attachments.isEmpty() -> Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("No attachments on this item yet", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "No attachments on this item yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            textAlign = TextAlign.Center
+                        )
                         Spacer(Modifier.height(8.dp))
                         Text(
                             "Add boarding passes, screenshots, confirmations, or notes for this item.",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
@@ -124,6 +142,7 @@ fun ItemAttachmentsScreen(
                         ItemAttachmentRow(
                             linkedAttachment = linkedAttachment,
                             onOpen = { onOpenAttachment(linkedAttachment.attachment.id) },
+                            onEdit = { editingAttachment = linkedAttachment.attachment },
                             onRemove = if (linkedAttachment.linkType == ItemAttachmentLinkType.MANUAL) {
                                 { pendingRemoval = linkedAttachment }
                             } else {
@@ -151,6 +170,17 @@ fun ItemAttachmentsScreen(
         }
     }
 
+    editingAttachment?.let { attachment ->
+        ItemAttachmentEditDialog(
+            attachment = attachment,
+            onDismiss = { editingAttachment = null },
+            onSave = { displayName, tagsText ->
+                viewModel.updateAttachment(attachment, displayName, tagsText)
+                editingAttachment = null
+            }
+        )
+    }
+
     pendingRemoval?.let { linkedAttachment ->
         ConfirmDialog(
             title = "Remove attachment",
@@ -168,6 +198,7 @@ fun ItemAttachmentsScreen(
 private fun ItemAttachmentRow(
     linkedAttachment: ItineraryItemAttachment,
     onOpen: () -> Unit,
+    onEdit: () -> Unit,
     onRemove: (() -> Unit)?
 ) {
     val attachment = linkedAttachment.attachment
@@ -207,6 +238,9 @@ private fun ItemAttachmentRow(
                     )
                 }
             }
+            IconButton(onClick = onEdit) {
+                Icon(Icons.Default.Edit, contentDescription = "Rename or tag")
+            }
             if (onRemove != null) {
                 IconButton(onClick = onRemove) {
                     Icon(Icons.Default.Delete, contentDescription = "Remove attachment")
@@ -214,6 +248,51 @@ private fun ItemAttachmentRow(
             }
         }
     }
+}
+
+@Composable
+private fun ItemAttachmentEditDialog(
+    attachment: Attachment,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    var displayName by remember(attachment.id) { mutableStateOf(attachment.displayName) }
+    var tagsText by remember(attachment.id) { mutableStateOf(attachment.tags.joinToString(", ")) }
+    val isValid = displayName.trim().isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename attachment") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = displayName,
+                    onValueChange = { displayName = it },
+                    label = { Text("Name") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = tagsText,
+                    onValueChange = { tagsText = it },
+                    label = { Text("Tags") },
+                    supportingText = { Text("Separate tags with commas") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(displayName.trim(), tagsText) }, enabled = isValid) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 private fun iconFor(attachment: Attachment): ImageVector = when {

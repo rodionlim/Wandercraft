@@ -67,6 +67,21 @@ class AttachmentViewerViewModel @Inject constructor(
         }
     }
 
+    fun rename(newName: String) {
+        val current = _state.value.attachment ?: return
+        val trimmed = newName.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            runCatching {
+                val updated = current.copy(displayName = trimmed)
+                repository.update(updated)
+                _state.value = _state.value.copy(attachment = updated)
+            }.onFailure { error ->
+                _state.value = _state.value.copy(error = error.message ?: "Failed to rename attachment")
+            }
+        }
+    }
+
     override fun onCleared() {
         _state.value.pdfPages.forEach { bitmap ->
             if (!bitmap.isRecycled) bitmap.recycle()

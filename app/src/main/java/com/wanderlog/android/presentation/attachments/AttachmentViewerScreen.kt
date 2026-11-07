@@ -17,13 +17,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -50,6 +54,7 @@ fun AttachmentViewerScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val attachment = state.attachment
+    var showRenameDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -58,6 +63,13 @@ fun AttachmentViewerScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    if (attachment != null) {
+                        IconButton(onClick = { showRenameDialog = true }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Rename attachment")
+                        }
                     }
                 }
             )
@@ -144,6 +156,39 @@ fun AttachmentViewerScreen(
 
             Box(modifier = Modifier.fillMaxWidth()) {} // preserve height
         }
+    }
+
+    if (showRenameDialog && attachment != null) {
+        var newName by remember(attachment.id, attachment.displayName) { mutableStateOf(attachment.displayName) }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename attachment") },
+            text = {
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("Name") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.rename(newName)
+                        showRenameDialog = false
+                    },
+                    enabled = newName.trim().isNotBlank()
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

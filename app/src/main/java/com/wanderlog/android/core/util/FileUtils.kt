@@ -3,6 +3,7 @@ package com.wanderlog.android.core.util
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -100,6 +101,7 @@ object FileUtils {
                             val width = (page.width * scale).toInt()
                             val height = (page.height * scale).toInt()
                             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                            bitmap.eraseColor(Color.WHITE)
                             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             val out = ByteArrayOutputStream()
                             bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
@@ -119,10 +121,11 @@ object FileUtils {
                     val count = minOf(renderer.pageCount, maxPages)
                     (0 until count).map { idx ->
                         renderer.openPage(idx).use { page ->
-                            val scale = 150f / 72f
+                            val scale = 240f / 72f
                             val width = (page.width * scale).toInt()
                             val height = (page.height * scale).toInt()
                             Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
+                                bitmap.eraseColor(Color.WHITE)
                                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                             }
                         }

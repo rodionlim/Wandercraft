@@ -9,6 +9,7 @@ import com.wanderlog.android.domain.model.ItineraryItemType
 import com.wanderlog.android.domain.model.ItemAttachmentLinkType
 import com.wanderlog.android.domain.model.ItineraryItemAttachment
 import com.wanderlog.android.domain.model.defaultAttachmentTags
+import com.wanderlog.android.domain.model.normalizeAttachmentTags
 import com.wanderlog.android.domain.repository.AttachmentRepository
 import com.wanderlog.android.domain.repository.ItineraryItemAttachmentRepository
 import com.wanderlog.android.domain.repository.ItineraryRepository
@@ -58,26 +59,54 @@ class ItemAttachmentsViewModel @Inject constructor(
     }
 
     fun importAttachment(uri: Uri) {
+        importAttachments(listOf(uri))
+    }
+
+    fun importAttachments(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
             _state.update { it.copy(isImporting = true, error = null) }
-            runCatching {
-                itineraryItemAttachmentRepository.importAttachmentForItem(
-                    tripId = tripId,
-                    itemId = itemId,
-                    uri = uri,
-                    label = state.value.itemTitle,
-                    tags = itemType?.defaultAttachmentTags().orEmpty(),
-                    linkType = ItemAttachmentLinkType.MANUAL
-                )
-            }.onSuccess {
-                _state.update { it.copy(isImporting = false) }
-            }.onFailure { error ->
-                _state.update {
-                    it.copy(
-                        isImporting = false,
-                        error = error.message ?: "Failed to add attachment"
+            val errors = mutableListOf<String>()
+            for (uri in uris) {
+                runCatching {
+                    itineraryItemAttachmentRepository.importAttachmentForItem(
+                        tripId = tripId,
+                        itemId = itemId,
+                        uri = uri,
+                        label = state.value.itemTitle,
+                        tags = itemType?.defaultAttachmentTags().orEmpty(),
+                        linkType = ItemAttachmentLinkType.MANUAL
                     )
+                }.onFailure { error ->
+                    errors += (error.message ?: "Failed to add attachment")
                 }
+            }
+            _state.update {
+                it.copy(
+                    isImporting = false,
+                    error = errors.distinct().joinToString("\n").ifBlank { null }
+                )
+            }
+        }
+    }
+
+    fun updateAttachment(attachment: Attachment, displayName: String, tagsText: String) {
+        val normalizedName = displayName.trim()
+        if (normalizedName.isBlank()) {
+            _state.update { it.copy(error = "Attachment name cannot be blank") }
+            return
+        }
+
+        viewModelScope.launch {
+            runCatching {
+                attachmentRepository.update(
+                    attachment.copy(
+                        displayName = normalizedName,
+                        tags = normalizeAttachmentTags(tagsText.split(','))
+                    )
+                )
+            }.onFailure { error ->
+                _state.update { it.copy(error = error.message ?: "Failed to rename attachment") }
             }
         }
     }

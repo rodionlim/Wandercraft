@@ -1,6 +1,7 @@
 package com.wanderlog.android.presentation.attachments
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -79,7 +80,9 @@ fun AttachmentsScreen(
     var relinkingAttachment by remember { mutableStateOf<Attachment?>(null) }
     var searchVisible by rememberSaveable { mutableStateOf(false) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
-    var launchedPickerOnOpen by rememberSaveable(pickOnOpen) { mutableStateOf(false) }
+    var awaitingInitialPickResult by rememberSaveable { mutableStateOf(false) }
+
+    BackHandler(onBack = onBack)
 
     val filteredAttachments = remember(attachments, searchQuery) {
         val query = searchQuery.trim().lowercase()
@@ -94,13 +97,19 @@ fun AttachmentsScreen(
         }
     }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let { viewModel.import(it, null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
+        val wasInitialPick = awaitingInitialPickResult
+        awaitingInitialPickResult = false
+        if (uris.isNotEmpty()) {
+            viewModel.importAll(uris, null)
+        } else if (wasInitialPick) {
+            onBack()
+        }
     }
 
-    LaunchedEffect(pickOnOpen, launchedPickerOnOpen) {
-        if (pickOnOpen && !launchedPickerOnOpen) {
-            launchedPickerOnOpen = true
+    LaunchedEffect(pickOnOpen) {
+        if (pickOnOpen && viewModel.consumePickOnOpen()) {
+            awaitingInitialPickResult = true
             picker.launch(
                 arrayOf(
                     "text/markdown", "text/plain", "text/*",

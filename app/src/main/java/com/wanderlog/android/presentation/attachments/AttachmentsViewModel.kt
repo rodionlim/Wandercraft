@@ -23,13 +23,22 @@ import javax.inject.Inject
 
 @HiltViewModel
 class AttachmentsViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val repository: AttachmentRepository,
     itineraryRepository: ItineraryRepository,
     private val itineraryItemAttachmentRepository: ItineraryItemAttachmentRepository
 ) : ViewModel() {
 
     val tripId: String = savedStateHandle.get<String>(Screen.Attachments.ARG_TRIP_ID)!!
+
+    fun consumePickOnOpen(): Boolean {
+        val shouldPick = savedStateHandle.get<Boolean>(Screen.Attachments.ARG_PICK_ON_OPEN) == true
+        val alreadyConsumed = savedStateHandle.get<Boolean>(KEY_CONSUMED_PICK_ON_OPEN) == true
+        if (!shouldPick || alreadyConsumed) return false
+        savedStateHandle[KEY_CONSUMED_PICK_ON_OPEN] = true
+        savedStateHandle[Screen.Attachments.ARG_PICK_ON_OPEN] = false
+        return true
+    }
 
     val attachments: StateFlow<List<Attachment>> = repository.getAttachmentsForTrip(tripId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -44,10 +53,22 @@ class AttachmentsViewModel @Inject constructor(
     val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
 
     fun import(uri: Uri, label: String?, tags: List<String> = emptyList()) {
+        importAll(listOf(uri), label, tags)
+    }
+
+    fun importAll(uris: List<Uri>, label: String?, tags: List<String> = emptyList()) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
             _isImporting.value = true
-            runCatching { repository.importFromUri(tripId, uri, label, tags) }
-                .onFailure { _error.value = it.message ?: "Import failed" }
+            _error.value = null
+            val errors = mutableListOf<String>()
+            for (uri in uris) {
+                runCatching { repository.importFromUri(tripId, uri, label, tags) }
+                    .onFailure { errors += (it.message ?: "Import failed") }
+            }
+            if (errors.isNotEmpty()) {
+                _error.value = errors.distinct().joinToString("\n")
+            }
             _isImporting.value = false
         }
     }
@@ -89,4 +110,8 @@ class AttachmentsViewModel @Inject constructor(
     }
 
     fun clearError() { _error.value = null }
+
+    companion object {
+        private const val KEY_CONSUMED_PICK_ON_OPEN = "consumed_pick_on_open"
+    }
 }

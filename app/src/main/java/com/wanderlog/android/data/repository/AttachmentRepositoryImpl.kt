@@ -74,11 +74,16 @@ class AttachmentRepositoryImpl @Inject constructor(
 
     override suspend fun update(attachment: Attachment) = withContext(Dispatchers.IO) {
         val existing = dao.getByIdIncludingDeleted(attachment.id) ?: return@withContext
-        val now = syncMetadataStamp.now()
+        val now = maxOf(syncMetadataStamp.now(), existing.updatedAt + 1)
         val deviceId = syncMetadataStamp.currentDeviceId()
         dao.update(
             AttachmentEntity.fromDomain(
-                attachment = attachment.copy(tags = normalizeAttachmentTags(attachment.tags)),
+                attachment = attachment.copy(
+                    localPath = existing.localPath,
+                    sizeBytes = existing.sizeBytes,
+                    createdAt = existing.createdAt,
+                    tags = normalizeAttachmentTags(attachment.tags)
+                ),
                 updatedAt = now,
                 deletedAt = existing.deletedAt,
                 lastModifiedByDeviceId = deviceId

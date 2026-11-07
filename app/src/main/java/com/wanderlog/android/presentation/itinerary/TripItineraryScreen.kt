@@ -185,6 +185,7 @@ fun TripItineraryScreen(
     var showFileImport by remember { mutableStateOf(false) }
     var showAddOptions by remember { mutableStateOf(false) }
     var openFileImportAfterAddOptions by remember { mutableStateOf(false) }
+    var openAttachmentsAfterAddOptions by remember { mutableStateOf(false) }
     var itemToDelete by remember { mutableStateOf<ItineraryItem?>(null) }
     var showOverflowMenu by remember { mutableStateOf(false) }
 
@@ -202,10 +203,14 @@ fun TripItineraryScreen(
         initialPlaceQuery = null
     }
 
-    LaunchedEffect(showAddOptions, openFileImportAfterAddOptions) {
+    LaunchedEffect(showAddOptions, openFileImportAfterAddOptions, openAttachmentsAfterAddOptions) {
         if (!showAddOptions && openFileImportAfterAddOptions) {
             openFileImportAfterAddOptions = false
             showFileImport = true
+        }
+        if (!showAddOptions && openAttachmentsAfterAddOptions) {
+            openAttachmentsAfterAddOptions = false
+            onOpenAttachments(true)
         }
     }
 
@@ -623,7 +628,7 @@ fun TripItineraryScreen(
                 OutlinedButton(
                     onClick = {
                         showAddOptions = false
-                        onOpenAttachments(true)
+                        openAttachmentsAfterAddOptions = true
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
