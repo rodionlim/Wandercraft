@@ -40,6 +40,7 @@ data class ItemFormState(
     val rating: Int? = null,
     val bookingRef: String = "",
     val costAmount: String = "",
+    val costCurrencyCode: String = "",
     val costBreakdown: List<CostBreakdownFormItem> = emptyList(),
     val linkedExpenseId: String? = null,
     val linkedExpenseExists: Boolean = false,
@@ -73,6 +74,7 @@ class ItineraryItemFormViewModel @Inject constructor(
                 rating = item.rating,
                 bookingRef = item.bookingRef ?: "",
                 costAmount = linkedExpense?.amount?.toEditableAmount().orEmpty(),
+                costCurrencyCode = linkedExpense?.currencyCode.orEmpty(),
                 costBreakdown = linkedExpense?.breakdown?.map { entry ->
                     CostBreakdownFormItem(
                         label = entry.label,
@@ -102,6 +104,7 @@ class ItineraryItemFormViewModel @Inject constructor(
     fun onRatingChange(v: Int?) = _state.update { it.copy(rating = v?.coerceIn(1, 10)) }
     fun onBookingRefChange(v: String) = _state.update { it.copy(bookingRef = v) }
     fun onCostChange(v: String) = _state.update { it.copy(costAmount = v) }
+    fun onCostCurrencyCodeChange(v: String) = _state.update { it.copy(costCurrencyCode = v) }
 
     fun onAddCostBreakdownItem() = _state.update { current ->
         current.copy(costBreakdown = current.costBreakdown + CostBreakdownFormItem())
@@ -256,12 +259,15 @@ class ItineraryItemFormViewModel @Inject constructor(
         val defaultCategory = item.itemType.defaultExpenseCategory()
         if (defaultCategory != null && amount != null) {
             val existingExpense = loadedLinkedExpense
+            val resolvedCurrency = _state.value.costCurrencyCode.takeIf { it.isNotBlank() }
+                ?: existingExpense?.currencyCode
+                ?: currencyCode
             val expense = Expense(
                 id = item.linkedExpenseId ?: UUID.randomUUID().toString(),
                 tripId = item.tripId,
                 title = itemTitle,
                 amount = amount,
-                currencyCode = existingExpense?.currencyCode ?: currencyCode,
+                currencyCode = resolvedCurrency,
                 category = defaultCategory,
                 date = dayDate,
                 notes = existingExpense?.notes,
