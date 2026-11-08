@@ -25,4 +25,13 @@ class ImportedMoneyParserTest {
     fun `parseAmount returns null when no amount exists`() {
         assertNull(ImportedMoneyParser.parseAmount("price unavailable"))
     }
+
+    @Test
+    fun `toEditableAmount and capAmountToTwoDecimals cap at 2 decimal places`() {
+        assertEquals("1000", 1000.0.toEditableAmount())
+        assertEquals("41.89", (1000.0 * 0.031 / 0.74).toEditableAmount())
+        assertEquals("12.5", 12.500000001.toEditableAmount())
+        assertEquals("12.34", "12.3456".capAmountToTwoDecimals())
+        assertEquals("12.3", "12.3".capAmountToTwoDecimals())
+    }
 }

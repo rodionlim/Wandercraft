@@ -8,6 +8,9 @@ import androidx.lifecycle.viewModelScope
 import com.wanderlog.android.core.util.ApproximateCurrencyConverter
 import com.wanderlog.android.core.util.BudgetDisplayCurrencies
 import com.wanderlog.android.core.util.ImportedMoneyParser
+import com.wanderlog.android.core.util.capAmountToTwoDecimals
+import com.wanderlog.android.core.util.roundToTwoDecimals
+import com.wanderlog.android.core.util.toEditableAmount
 import com.wanderlog.android.domain.model.Expense
 import com.wanderlog.android.domain.model.ExpenseBreakdownItem
 import com.wanderlog.android.domain.model.ExpenseCategory
@@ -171,7 +174,7 @@ class BudgetViewModel @Inject constructor(
         )
     }
     fun onTitleChange(v: String) = _state.update { it.copy(addTitle = v, formError = null) }
-    fun onAmountChange(v: String) = _state.update { it.copy(addAmount = v, formError = null) }
+    fun onAmountChange(v: String) = _state.update { it.copy(addAmount = v.capAmountToTwoDecimals(), formError = null) }
     fun onCurrencyCodeChange(v: String) = _state.update { it.copy(addCurrencyCode = BudgetDisplayCurrencies.sanitize(v)) }
     fun onCategoryChange(v: ExpenseCategory) = _state.update { it.copy(addCategory = v) }
 
@@ -191,9 +194,10 @@ class BudgetViewModel @Inject constructor(
 
     fun onBreakdownAmountChange(index: Int, amount: String) = _state.update { current ->
         if (index !in current.addBreakdown.indices) return@update current
+        val cappedAmount = amount.capAmountToTwoDecimals()
         val previousSum = current.addBreakdown.sumParsedAmounts()
         val updated = current.addBreakdown.toMutableList()
-        updated[index] = updated[index].copy(amount = amount)
+        updated[index] = updated[index].copy(amount = cappedAmount)
         val newSum = updated.sumParsedAmounts()
         val currentAmountParsed = ImportedMoneyParser.parseAmount(current.addAmount)
         val shouldSyncAmount = current.addAmount.isBlank() ||
@@ -379,13 +383,13 @@ class BudgetViewModel @Inject constructor(
             }
             parsedBreakdown += ExpenseBreakdownItem(
                 label = rowLabel,
-                amount = rowAmount,
+                amount = rowAmount.roundToTwoDecimals(),
                 isActive = row.isActive
             )
         }
-        val parsedAmountInput = ImportedMoneyParser.parseAmount(s.addAmount)
+        val parsedAmountInput = ImportedMoneyParser.parseAmount(s.addAmount)?.roundToTwoDecimals()
         val amount = if (parsedBreakdown.isNotEmpty()) {
-            parsedBreakdown.sumOf(ExpenseBreakdownItem::amount)
+            parsedBreakdown.sumOf(ExpenseBreakdownItem::amount).roundToTwoDecimals()
         } else {
             parsedAmountInput
         } ?: run {
@@ -512,9 +516,4 @@ class BudgetViewModel @Inject constructor(
 }
 
 private fun List<BudgetBreakdownFormItem>.sumParsedAmounts(): Double =
-    mapNotNull { ImportedMoneyParser.parseAmount(it.amount)?.takeIf { value -> value >= 0.0 } }.sum()
-
-private fun Double.toEditableAmount(): String {
-    val wholeNumber = toLong().toDouble() == this
-    return if (wholeNumber) toLong().toString() else toString()
-}
+    mapNotNull { ImportedMoneyParser.parseAmount(it.amount)?.takeIf { value -> value >= 0.0 } }.sum().roundToTwoDecimals()

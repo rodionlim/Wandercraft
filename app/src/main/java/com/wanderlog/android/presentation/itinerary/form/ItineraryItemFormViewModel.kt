@@ -3,6 +3,9 @@ package com.wanderlog.android.presentation.itinerary.form
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wanderlog.android.core.util.ImportedMoneyParser
+import com.wanderlog.android.core.util.capAmountToTwoDecimals
+import com.wanderlog.android.core.util.roundToTwoDecimals
+import com.wanderlog.android.core.util.toEditableAmount
 import com.wanderlog.android.domain.model.Expense
 import com.wanderlog.android.domain.model.ExpenseBreakdownItem
 import com.wanderlog.android.domain.model.ExpenseCategory
@@ -103,7 +106,7 @@ class ItineraryItemFormViewModel @Inject constructor(
     fun onNotesChange(v: String) = _state.update { it.copy(notes = v) }
     fun onRatingChange(v: Int?) = _state.update { it.copy(rating = v?.coerceIn(1, 10)) }
     fun onBookingRefChange(v: String) = _state.update { it.copy(bookingRef = v) }
-    fun onCostChange(v: String) = _state.update { it.copy(costAmount = v) }
+    fun onCostChange(v: String) = _state.update { it.copy(costAmount = v.capAmountToTwoDecimals()) }
     fun onCostCurrencyCodeChange(v: String) = _state.update { it.copy(costCurrencyCode = v) }
 
     fun onAddCostBreakdownItem() = _state.update { current ->
@@ -119,9 +122,10 @@ class ItineraryItemFormViewModel @Inject constructor(
 
     fun onCostBreakdownAmountChange(index: Int, amount: String) = _state.update { current ->
         if (index !in current.costBreakdown.indices) return@update current
+        val cappedAmount = amount.capAmountToTwoDecimals()
         val previousSum = current.costBreakdown.sumParsedAmounts()
         val updated = current.costBreakdown.toMutableList()
-        updated[index] = updated[index].copy(amount = amount)
+        updated[index] = updated[index].copy(amount = cappedAmount)
         val newSum = updated.sumParsedAmounts()
         val currentCostParsed = ImportedMoneyParser.parseAmount(current.costAmount)
         val shouldSyncCost = current.costAmount.isBlank() ||
@@ -189,21 +193,21 @@ class ItineraryItemFormViewModel @Inject constructor(
             }
             parsedBreakdown += ExpenseBreakdownItem(
                 label = rowLabel,
-                amount = rowAmount,
+                amount = rowAmount.roundToTwoDecimals(),
                 isActive = row.isActive
             )
         }
 
         val parsedCostInput = when {
             s.costAmount.isBlank() -> null
-            else -> ImportedMoneyParser.parseAmount(s.costAmount)
+            else -> ImportedMoneyParser.parseAmount(s.costAmount)?.roundToTwoDecimals()
         }
         if (s.costAmount.isNotBlank() && parsedCostInput == null) {
             _state.update { it.copy(error = "Enter a valid cost amount.") }
             return
         }
         val parsedCost = if (parsedBreakdown.isNotEmpty()) {
-            parsedBreakdown.sumOf(ExpenseBreakdownItem::amount)
+            parsedBreakdown.sumOf(ExpenseBreakdownItem::amount).roundToTwoDecimals()
         } else {
             parsedCostInput
         }
@@ -300,12 +304,7 @@ class ItineraryItemFormViewModel @Inject constructor(
 }
 
 private fun List<CostBreakdownFormItem>.sumParsedAmounts(): Double =
-    mapNotNull { ImportedMoneyParser.parseAmount(it.amount)?.takeIf { value -> value >= 0.0 } }.sum()
-
-private fun Double.toEditableAmount(): String {
-    val wholeNumber = toLong().toDouble() == this
-    return if (wholeNumber) toLong().toString() else toString()
-}
+    mapNotNull { ImportedMoneyParser.parseAmount(it.amount)?.takeIf { value -> value >= 0.0 } }.sum().roundToTwoDecimals()
 
 private fun ItineraryItemType.supportsLinkedExpense(): Boolean = when (this) {
     ItineraryItemType.ACTIVITY,

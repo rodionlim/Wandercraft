@@ -1,5 +1,8 @@
 package com.wanderlog.android.core.util
 
+import java.math.BigDecimal
+import java.math.RoundingMode
+
 object ImportedMoneyParser {
 
     private val amountRegex = Regex("""\d[\d,.\s]*\d|\d""")
@@ -46,5 +49,23 @@ object ImportedMoneyParser {
 
             else -> compact.replace(",", "")
         }
+    }
+}
+
+fun Double.roundToTwoDecimals(): Double =
+    BigDecimal.valueOf(this).setScale(2, RoundingMode.HALF_UP).toDouble()
+
+fun Double.toEditableAmount(): String =
+    BigDecimal.valueOf(this)
+        .setScale(2, RoundingMode.HALF_UP)
+        .stripTrailingZeros()
+        .toPlainString()
+
+fun String.capAmountToTwoDecimals(): String {
+    val dotIndex = indexOf('.')
+    return if (dotIndex >= 0 && length > dotIndex + 3) {
+        substring(0, dotIndex + 3)
+    } else {
+        this
     }
 }
