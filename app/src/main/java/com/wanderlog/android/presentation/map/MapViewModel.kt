@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wanderlog.android.core.util.flightDetailLine
 import com.wanderlog.android.domain.model.ItineraryItem
+import com.wanderlog.android.domain.model.ItineraryItemType
 import com.wanderlog.android.domain.repository.ItineraryRepository
 import com.wanderlog.android.domain.repository.PlacesRepository
 import com.wanderlog.android.domain.repository.TripRepository
@@ -16,6 +17,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -30,7 +32,8 @@ data class MapDayMeta(
 data class MapPointUi(
     val item: ItineraryItem,
     val dayNumber: Int? = null,
-    val dayDate: LocalDate? = null
+    val dayDate: LocalDate? = null,
+    val isFinalDay: Boolean = false
 )
 
 data class MapUiState(
@@ -60,7 +63,15 @@ class MapViewModel @Inject constructor(
     init {
         _state.update { it.copy(mapError = resolveMapError(context)) }
         viewModelScope.launch {
-            tripRepository.getDaysForTripFlow(tripId).collect { days ->
+            val flow = if (dayId != null)
+                itineraryRepository.getItemsForDay(dayId) // dayId specific
+            else
+                itineraryRepository.getItemsForTrip(tripId)
+
+            combine(
+                tripRepository.getDaysForTripFlow(tripId),
+                flow
+            ) { days, all -> days to all }.collect { (days, all) ->
                 dayMetadataById = days.associate { day ->
                     day.id to MapDayMeta(
                         tripDayId = day.id,
@@ -68,24 +79,13 @@ class MapViewModel @Inject constructor(
                         date = day.date
                     )
                 }
-                _state.update { current ->
-                    current.copy(points = current.points.map { point -> withDayMetadata(point.item) })
-                }
-            }
-        }
-        viewModelScope.launch {
-            val flow = if (dayId != null)
-                itineraryRepository.getItemsForDay(dayId) // dayId specific
-            else
-                itineraryRepository.getItemsForTrip(tripId)
-
-            flow.collect { all ->
-                val mappable = all.filter { item ->
+                val eligibleItems = all.filterNot(::isExcludedFromMap)
+                val mappable = eligibleItems.filter { item ->
                     !needsFlightPlaceRefresh(item) &&
                     item.place?.latitude != null &&
                         item.place.longitude != null
                 }.map(::withDayMetadata)
-                val pendingResolution = all.any { item ->
+                val pendingResolution = eligibleItems.any { item ->
                     shouldResolveForMap(item) && item.id !in attemptedResolutionIds
                 }
 
@@ -96,7 +96,7 @@ class MapViewModel @Inject constructor(
                     )
                 }
 
-                val updatedAnyItems = resolveMissingCoordinates(all)
+                val updatedAnyItems = resolveMissingCoordinates(eligibleItems)
                 if (!updatedAnyItems) {
                     _state.update { current -> current.copy(isResolving = false) }
                 }
@@ -106,12 +106,17 @@ class MapViewModel @Inject constructor(
 
     fun selectItem(id: String?) = _state.update { it.copy(selectedItemId = id) }
 
+    private fun isExcludedFromMap(item: ItineraryItem): Boolean =
+        item.itemType == ItineraryItemType.FLIGHT &&
+            (dayMetadataById[item.tripDayId]?.dayNumber == 1 || item.isOnFinalTripDay())
+
     private fun withDayMetadata(item: ItineraryItem): MapPointUi {
         val meta = dayMetadataById[item.tripDayId]
         return MapPointUi(
             item = item,
             dayNumber = meta?.dayNumber,
-            dayDate = meta?.date
+            dayDate = meta?.date,
+            isFinalDay = item.isOnFinalTripDay()
         )
     }
 

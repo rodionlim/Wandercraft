@@ -113,6 +113,78 @@ class NearbyTripSyncTransportParsingTest {
         assertEquals("trip-1", bundle?.trip?.id)
     }
 
+    @Test
+    fun `parseIncomingTripSyncBundle preserves expense breakdown and tolerates legacy expenses without breakdown`() {
+        val bundle = parseIncomingTripSyncBundle(
+            payload =
+                """
+                {
+                  "protocolVersion": 6,
+                  "generatedAt": 123,
+                  "trip": {
+                    "id": "trip-1",
+                    "name": "Perth",
+                    "destination": "Perth",
+                    "startDate": "2026-05-20",
+                    "endDate": "2026-05-25",
+                    "currencyCode": "AUD",
+                    "travellerProfiles": [],
+                    "metadata": {
+                      "updatedAt": 123,
+                      "lastModifiedByDeviceId": "pixel7"
+                    }
+                  },
+                  "expenses": [
+                    {
+                      "id": "exp-legacy",
+                      "tripId": "trip-1",
+                      "title": "Legacy Taxi",
+                      "amount": 50.0,
+                      "currencyCode": "AUD",
+                      "category": "TRANSPORT",
+                      "createdAt": 100,
+                      "metadata": {
+                        "updatedAt": 120,
+                        "lastModifiedByDeviceId": "pixel7"
+                      }
+                    },
+                    {
+                      "id": "exp-breakdown",
+                      "tripId": "trip-1",
+                      "title": "Hotel",
+                      "amount": 1000.0,
+                      "currencyCode": "AUD",
+                      "category": "ACCOMMODATION",
+                      "breakdown": [
+                        { "label": "parents", "amount": 700.0, "isActive": false },
+                        { "label": "our family", "amount": 300.0, "isActive": true }
+                      ],
+                      "createdAt": 100,
+                      "metadata": {
+                        "updatedAt": 130,
+                        "lastModifiedByDeviceId": "pixel7"
+                      }
+                    }
+                  ]
+                }
+                """.trimIndent(),
+            bundleAdapter = bundleAdapter,
+            bundlePayloadAdapter = bundlePayloadAdapter
+        )
+
+        assertEquals(2, bundle?.expenses?.size)
+        val legacyExpense = bundle?.expenses?.first { it.id == "exp-legacy" }
+        val breakdownExpense = bundle?.expenses?.first { it.id == "exp-breakdown" }
+        assertTrue(legacyExpense?.breakdown?.isEmpty() == true)
+        assertEquals(2, breakdownExpense?.breakdown?.size)
+        assertEquals("parents", breakdownExpense?.breakdown?.get(0)?.label)
+        assertEquals(700.0, breakdownExpense?.breakdown?.get(0)?.amount ?: 0.0, 0.001)
+        assertEquals(false, breakdownExpense?.breakdown?.get(0)?.isActive)
+        assertEquals("our family", breakdownExpense?.breakdown?.get(1)?.label)
+        assertEquals(300.0, breakdownExpense?.breakdown?.get(1)?.amount ?: 0.0, 0.001)
+        assertEquals(true, breakdownExpense?.breakdown?.get(1)?.isActive)
+    }
+
   @Test
   fun `older peers without confirmation capability remain supported`() {
     val parsed = parseIncomingControlPayload("""{"type":"manifest","tripId":"trip-1","manifest":{"records":[]}}""", controlPayloadAdapter)

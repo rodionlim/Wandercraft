@@ -8,10 +8,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -23,11 +30,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.wanderlog.android.core.util.ImportedMoneyParser
+import com.wanderlog.android.core.util.toCurrencyString
 import com.wanderlog.android.domain.model.Expense
 import com.wanderlog.android.domain.model.ItineraryItem
 import com.wanderlog.android.domain.model.ItineraryItemType
@@ -112,6 +122,11 @@ fun ItineraryItemFormSheet(
         onRatingChange = viewModel::onRatingChange,
         onBookingRefChange = viewModel::onBookingRefChange,
         onCostChange = viewModel::onCostChange,
+        onAddCostBreakdownItem = viewModel::onAddCostBreakdownItem,
+        onCostBreakdownLabelChange = viewModel::onCostBreakdownLabelChange,
+        onCostBreakdownAmountChange = viewModel::onCostBreakdownAmountChange,
+        onCostBreakdownActiveChange = viewModel::onCostBreakdownActiveChange,
+        onRemoveCostBreakdownItem = viewModel::onRemoveCostBreakdownItem,
         onPlaceButtonClick = {
             onPlaceSearchRequested(
                 state.place?.name
@@ -144,6 +159,11 @@ internal fun ItineraryItemFormContent(
     onRatingChange: (Int?) -> Unit,
     onBookingRefChange: (String) -> Unit,
     onCostChange: (String) -> Unit,
+    onAddCostBreakdownItem: () -> Unit = {},
+    onCostBreakdownLabelChange: (Int, String) -> Unit = { _, _ -> },
+    onCostBreakdownAmountChange: (Int, String) -> Unit = { _, _ -> },
+    onCostBreakdownActiveChange: (Int, Boolean) -> Unit = { _, _ -> },
+    onRemoveCostBreakdownItem: (Int) -> Unit = {},
     onPlaceButtonClick: () -> Unit
 ) {
     val selectedDay = availableDays.firstOrNull { it.id == selectedDayId }
@@ -283,6 +303,13 @@ internal fun ItineraryItemFormContent(
         )
 
         if (state.itemType.supportsLinkedExpense()) {
+            val breakdownTotal = state.costBreakdown.sumOf {
+                ImportedMoneyParser.parseAmount(it.amount)?.takeIf { v -> v >= 0.0 } ?: 0.0
+            }
+            val breakdownActiveTotal = state.costBreakdown
+                .filter(CostBreakdownFormItem::isActive)
+                .sumOf { ImportedMoneyParser.parseAmount(it.amount)?.takeIf { v -> v >= 0.0 } ?: 0.0 }
+
             OutlinedTextField(
                 value = state.costAmount,
                 onValueChange = onCostChange,
@@ -291,9 +318,88 @@ internal fun ItineraryItemFormContent(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 supportingText = {
-                    Text("This creates or updates a linked expense in Budget.")
+                    if (state.costBreakdown.isEmpty()) {
+                        Text("This creates or updates a linked expense in Budget.")
+                    } else {
+                        Text(
+                            "Total: ${breakdownTotal.toCurrencyString(expenseCurrencyCode)} • Active (counted in spent): ${breakdownActiveTotal.toCurrencyString(expenseCurrencyCode)}"
+                        )
+                    }
                 }
             )
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (state.costBreakdown.isNotEmpty()) {
+                    Text(
+                        text = "Cost breakdown",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                state.costBreakdown.forEachIndexed { index, breakdownItem ->
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = breakdownItem.amount,
+                                onValueChange = { onCostBreakdownAmountChange(index, it) },
+                                label = { Text("Amount ($expenseCurrencyCode)") },
+                                modifier = Modifier.weight(0.42f),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true
+                            )
+                            OutlinedTextField(
+                                value = breakdownItem.label,
+                                onValueChange = { onCostBreakdownLabelChange(index, it) },
+                                label = { Text("For (e.g. parents)") },
+                                modifier = Modifier.weight(0.58f),
+                                singleLine = true
+                            )
+                            IconButton(onClick = { onRemoveCostBreakdownItem(index) }) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Remove breakdown item"
+                                )
+                            }
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = breakdownItem.isActive,
+                                onClick = { onCostBreakdownActiveChange(index, !breakdownItem.isActive) },
+                                label = {
+                                    Text(
+                                        if (breakdownItem.isActive) {
+                                            "Active (counts towards total spent)"
+                                        } else {
+                                            "Inactive (excluded from total spent)"
+                                        }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onAddCostBreakdownItem,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Add cost breakdown")
+                }
+            }
         }
 
         state.error?.let { Text(it, color = androidx.compose.material3.MaterialTheme.colorScheme.error) }

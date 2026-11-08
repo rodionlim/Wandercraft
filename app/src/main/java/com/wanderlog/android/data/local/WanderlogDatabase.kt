@@ -34,7 +34,7 @@ import com.wanderlog.android.data.local.entity.TripEntity
         TripNoteEntity::class,
         AttachmentEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = true
 )
 @TypeConverters(RoomConverters::class)
@@ -263,6 +263,14 @@ abstract class WanderlogDatabase : RoomDatabase() {
                 )
                 database.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_trip_notes_is_global ON trip_notes(is_global)"
+                )
+            }
+        }
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE expenses ADD COLUMN cost_breakdown TEXT NOT NULL DEFAULT ''"
                 )
             }
         }

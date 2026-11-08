@@ -2,6 +2,7 @@ package com.wanderlog.android.data.sync
 
 import android.content.Context
 import androidx.room.withTransaction
+import com.wanderlog.android.core.util.ExpenseBreakdownCodec
 import com.wanderlog.android.core.util.TravellerProfilesCodec
 import com.wanderlog.android.data.local.WanderlogDatabase
 import com.wanderlog.android.data.local.dao.AttachmentDao
@@ -299,6 +300,7 @@ private fun SyncExpensePayload.toEntity(): ExpenseEntity = ExpenseEntity(
     category = category,
     date = date?.let(LocalDate::parse),
     notes = notes,
+    breakdownRaw = ExpenseBreakdownCodec.encode(breakdown),
     createdAt = createdAt,
     updatedAt = metadata.updatedAt,
     deletedAt = metadata.deletedAt,

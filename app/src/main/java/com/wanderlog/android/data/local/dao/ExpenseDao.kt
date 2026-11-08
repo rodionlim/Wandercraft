@@ -64,6 +64,7 @@ interface ExpenseDao {
             category = :category,
             date = :date,
             notes = :notes,
+            cost_breakdown = :breakdownRaw,
             updated_at = :updatedAt,
             last_modified_by_device_id = :lastModifiedByDeviceId
         WHERE id = :id
@@ -77,6 +78,7 @@ interface ExpenseDao {
         category: String,
         date: java.time.LocalDate?,
         notes: String?,
+        breakdownRaw: String = "",
         updatedAt: Long,
         lastModifiedByDeviceId: String
     )

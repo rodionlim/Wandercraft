@@ -15,7 +15,10 @@ internal fun validateSyncBundle(bundle: TripSyncBundle) {
     val records = bundle.toManifest().records
     require(records.all { it.id.isNotBlank() } && records.map { it.key }.distinct().size == records.size) { "Bundle contains missing or duplicate record IDs" }
     bundle.tripDays.forEach { LocalDate.parse(it.date) }
-    bundle.expenses.forEach { it.date?.let(LocalDate::parse) }
+    bundle.expenses.forEach { expense ->
+        expense.date?.let(LocalDate::parse)
+        require(expense.breakdown.all { it.amount.isFinite() && it.amount >= 0.0 }) { "Invalid expense breakdown amount" }
+    }
     fun checkContent(encoded: String?, hash: String?) {
         if (encoded == null) return
         val bytes = Base64.getDecoder().decode(encoded)

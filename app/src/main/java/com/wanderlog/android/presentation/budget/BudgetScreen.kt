@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -58,11 +60,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.wanderlog.android.core.util.ApproximateCurrencyConverter
 import com.wanderlog.android.core.util.BudgetDisplayCurrencies
+import com.wanderlog.android.core.util.ImportedMoneyParser
 import com.wanderlog.android.core.ui.component.WanderTopBar
 import com.wanderlog.android.core.util.generateDateRange
 import com.wanderlog.android.core.util.toCurrencyString
@@ -101,7 +106,8 @@ fun BudgetScreen(
     )
     val searchFilteredExpenses = state.expenses.filter { expense ->
         matchesBudgetSearch(expense.title, searchQuery) ||
-            matchesBudgetSearch(expense.category.name, searchQuery)
+            matchesBudgetSearch(expense.category.name, searchQuery) ||
+            expense.breakdown.any { matchesBudgetSearch(it.label, searchQuery) }
     }
     val dayScopedExpenses = when {
         state.showUnscheduledOnly -> searchFilteredExpenses.filter { it.date == null }
@@ -119,7 +125,7 @@ fun BudgetScreen(
     )
     val scopeSpent = displayedExpenses.sumOf { expense ->
         ApproximateCurrencyConverter.convert(
-            amount = expense.amount,
+            amount = expense.activeAmount,
             fromCurrency = expense.currencyCode,
             toCurrency = state.displayCurrencyCode
         )
@@ -321,7 +327,80 @@ fun BudgetScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             OutlinedTextField(value = state.addTitle, onValueChange = viewModel::onTitleChange, label = { Text("Description") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                            OutlinedTextField(value = state.addAmount, onValueChange = viewModel::onAmountChange, label = { Text("Amount") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+                            OutlinedTextField(
+                                value = state.addAmount,
+                                onValueChange = viewModel::onAmountChange,
+                                label = { Text("Amount") },
+                                modifier = Modifier.fillMaxWidth(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                supportingText = if (state.addBreakdown.isNotEmpty()) {
+                                    {
+                                        val breakdownTotal = state.addBreakdown.sumOf {
+                                            ImportedMoneyParser.parseAmount(it.amount)?.takeIf { v -> v >= 0.0 } ?: 0.0
+                                        }
+                                        val breakdownActive = state.addBreakdown
+                                            .filter(BudgetBreakdownFormItem::isActive)
+                                            .sumOf { ImportedMoneyParser.parseAmount(it.amount)?.takeIf { v -> v >= 0.0 } ?: 0.0 }
+                                        Text(
+                                            "Total: ${breakdownTotal.toCurrencyString(state.addCurrencyCode)} • Active (counted in spent): ${breakdownActive.toCurrencyString(state.addCurrencyCode)}"
+                                        )
+                                    }
+                                } else null
+                            )
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (state.addBreakdown.isNotEmpty()) {
+                                    Text("Cost breakdown", style = MaterialTheme.typography.bodySmall)
+                                }
+                                state.addBreakdown.forEachIndexed { index, breakdownItem ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        OutlinedTextField(
+                                            value = breakdownItem.amount,
+                                            onValueChange = { viewModel.onBreakdownAmountChange(index, it) },
+                                            label = { Text("Amount") },
+                                            modifier = Modifier.weight(0.38f),
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            singleLine = true
+                                        )
+                                        OutlinedTextField(
+                                            value = breakdownItem.label,
+                                            onValueChange = { viewModel.onBreakdownLabelChange(index, it) },
+                                            label = { Text("For (e.g. parents)") },
+                                            modifier = Modifier.weight(0.47f),
+                                            singleLine = true
+                                        )
+                                        BreakdownStatusBadge(
+                                            isActive = breakdownItem.isActive,
+                                            onClick = { viewModel.onBreakdownActiveChange(index, !breakdownItem.isActive) }
+                                        )
+                                        IconButton(
+                                            onClick = { viewModel.onRemoveBreakdownItem(index) },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Remove breakdown item",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = viewModel::onAddBreakdownItem,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Add cost breakdown")
+                                }
+                            }
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text("Expense currency", style = MaterialTheme.typography.bodySmall)
                                 androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxWidth()) {
@@ -367,6 +446,13 @@ fun BudgetScreen(
                                         }
                                     }
                                 }
+                            }
+                            state.formError?.let { errorMsg ->
+                                Text(
+                                    text = errorMsg,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 TextButton(onClick = viewModel::cancelEditing) { Text("Cancel") }
@@ -418,6 +504,7 @@ fun BudgetScreen(
                             expense = expense,
                             displayCurrencyCode = state.displayCurrencyCode,
                             onClick = { viewModel.editExpense(expense) },
+                            onToggleBreakdownItem = { index -> viewModel.toggleBreakdownItemActive(expense, index) },
                             onDuplicate = { viewModel.duplicateExpense(expense) },
                             onDelete = { viewModel.deleteExpense(expense) }
                         )
@@ -530,6 +617,7 @@ private fun BudgetExpenseCard(
     expense: Expense,
     displayCurrencyCode: String,
     onClick: () -> Unit,
+    onToggleBreakdownItem: (Int) -> Unit = {},
     onDuplicate: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -538,69 +626,171 @@ private fun BudgetExpenseCard(
             .fillMaxWidth()
             .clickable(onClick = onClick)
     ) {
-        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(expense.title, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    expense.category.name.lowercase().replaceFirstChar { it.uppercase() },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                expense.date?.let { date ->
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(expense.title, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        date.toDisplayString(),
+                        expense.category.name.lowercase().replaceFirstChar { it.uppercase() },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    expense.date?.let { date ->
+                        Text(
+                            date.toDisplayString(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (expense.currencyCode != displayCurrencyCode) {
+                        Text(
+                            "Original: ${expense.activeAmount.toCurrencyString(expense.currencyCode)}" +
+                                if (expense.breakdown.isNotEmpty() && expense.activeAmount != expense.amount) {
+                                    " (Total: ${expense.amount.toCurrencyString(expense.currencyCode)})"
+                                } else {
+                                    ""
+                                },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-                if (expense.currencyCode != displayCurrencyCode) {
+                val displayActiveAmount = ApproximateCurrencyConverter.convert(
+                    amount = expense.activeAmount,
+                    fromCurrency = expense.currencyCode,
+                    toCurrency = displayCurrencyCode
+                )
+                val displayTotalAmount = ApproximateCurrencyConverter.convert(
+                    amount = expense.amount,
+                    fromCurrency = expense.currencyCode,
+                    toCurrency = displayCurrencyCode
+                )
+                Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                     Text(
-                        "Original: ${expense.amount.toCurrencyString(expense.currencyCode)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = displayActiveAmount.toCurrencyString(displayCurrencyCode),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    if (expense.breakdown.isNotEmpty() && expense.activeAmount != expense.amount) {
+                        Text(
+                            text = "Total: ${displayTotalAmount.toCurrencyString(displayCurrencyCode)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (expense.currencyCode != displayCurrencyCode) {
+                        Text(
+                            text = "Approx.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.width(4.dp))
+                IconButton(
+                    onClick = onDuplicate,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Duplicate",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Delete",
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
-            val displayAmount = ApproximateCurrencyConverter.convert(
-                amount = expense.amount,
-                fromCurrency = expense.currencyCode,
-                toCurrency = displayCurrencyCode
-            )
-            Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
-                Text(
-                    text = displayAmount.toCurrencyString(displayCurrencyCode),
-                    style = MaterialTheme.typography.titleMedium
-                )
-                if (expense.currencyCode != displayCurrencyCode) {
-                    Text(
-                        text = "Approx.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+
+            if (expense.breakdown.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    expense.breakdown.forEachIndexed { index, part ->
+                        val convertedPartAmount = ApproximateCurrencyConverter.convert(
+                            amount = part.amount,
+                            fromCurrency = expense.currencyCode,
+                            toCurrency = displayCurrencyCode
+                        )
+                        val amountLabel = if (expense.currencyCode != displayCurrencyCode) {
+                            "${convertedPartAmount.toCurrencyString(displayCurrencyCode)} (${part.amount.toCurrencyString(expense.currencyCode)})"
+                        } else {
+                            part.amount.toCurrencyString(expense.currencyCode)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "$amountLabel → ${part.label}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (part.isActive) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                textDecoration = if (part.isActive) TextDecoration.None else TextDecoration.LineThrough,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            BreakdownStatusBadge(
+                                isActive = part.isActive,
+                                onClick = { onToggleBreakdownItem(index) }
+                            )
+                        }
+                    }
                 }
-            }
-            Spacer(Modifier.width(4.dp))
-            IconButton(
-                onClick = onDuplicate,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    Icons.Default.ContentCopy,
-                    contentDescription = "Duplicate",
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Delete",
-                    modifier = Modifier.size(18.dp)
-                )
             }
         }
+    }
+}
+
+@Composable
+private fun BreakdownStatusBadge(
+    isActive: Boolean,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(6.dp)
+    Surface(
+        modifier = Modifier
+            .clip(shape)
+            .clickable(onClick = onClick),
+        shape = shape,
+        color = if (isActive) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        },
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (isActive) {
+                MaterialTheme.colorScheme.secondary.copy(alpha = 0.4f)
+            } else {
+                MaterialTheme.colorScheme.outlineVariant
+            }
+        )
+    ) {
+        Text(
+            text = if (isActive) "Active" else "Inactive",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isActive) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
     }
 }
 
@@ -720,7 +910,7 @@ private fun buildBudgetSections(
 private fun totalInDisplayCurrency(expenses: List<Expense>, displayCurrencyCode: String): Double =
     expenses.sumOf { expense ->
         ApproximateCurrencyConverter.convert(
-            amount = expense.amount,
+            amount = expense.activeAmount,
             fromCurrency = expense.currencyCode,
             toCurrency = displayCurrencyCode
         )

@@ -1,5 +1,6 @@
 package com.wanderlog.android.data.repository
 
+import com.wanderlog.android.core.util.ExpenseBreakdownCodec
 import com.wanderlog.android.data.local.dao.ExpenseDao
 import com.wanderlog.android.data.local.entity.ExpenseEntity
 import com.wanderlog.android.data.sync.SyncMetadataStamp
@@ -18,7 +19,9 @@ class ExpenseRepositoryImpl @Inject constructor(
         dao.getExpensesForTrip(tripId).map { it.map(ExpenseEntity::toDomain) }
 
     override fun getTotalSpent(tripId: String): Flow<Double?> =
-        dao.getTotalSpent(tripId)
+        dao.getExpensesForTrip(tripId).map { entities ->
+            entities.sumOf { it.toDomain().activeAmount }
+        }
 
     override suspend fun insertExpense(expense: Expense) {
         val now = syncMetadataStamp.now()
@@ -42,6 +45,7 @@ class ExpenseRepositoryImpl @Inject constructor(
             category = expense.category.name,
             date = expense.date,
             notes = expense.notes,
+            breakdownRaw = ExpenseBreakdownCodec.encode(expense.breakdown),
             updatedAt = syncMetadataStamp.now(),
             lastModifiedByDeviceId = syncMetadataStamp.currentDeviceId()
         )

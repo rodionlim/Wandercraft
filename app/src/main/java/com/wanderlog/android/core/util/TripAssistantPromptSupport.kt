@@ -61,9 +61,25 @@ object TripAssistantPromptSupport {
                     append(" • ")
                     append(expense.currencyCode)
                     append(' ')
-                    append("%.2f".format(expense.amount))
+                    append("%.2f".format(expense.activeAmount))
+                    if (expense.breakdown.isNotEmpty() && expense.activeAmount != expense.amount) {
+                        append(" (total ")
+                        append(expense.currencyCode)
+                        append(' ')
+                        append("%.2f".format(expense.amount))
+                        append(')')
+                    }
                     append(" • ")
                     append(expense.category.name)
+                    if (expense.breakdown.isNotEmpty()) {
+                        append(" • Breakdown: ")
+                        append(
+                            expense.breakdown.joinToString(", ") { part ->
+                                val status = if (part.isActive) "active" else "inactive"
+                                "${part.label}: ${expense.currencyCode} ${"%.2f".format(part.amount)} ($status)"
+                            }
+                        )
+                    }
                     expense.notes?.takeIf { it.isNotBlank() }?.let {
                         append(" • ")
                         append(it)

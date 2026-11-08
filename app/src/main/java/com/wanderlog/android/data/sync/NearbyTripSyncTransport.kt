@@ -700,6 +700,38 @@ internal fun normalizeIncomingTripSyncBundlePayload(
     val payloadMap = bundlePayloadAdapter.fromJson(payload)?.toMutableMap() ?: return payload
     payloadMap["protocolVersion"] = payloadMap["protocolVersion"]
         .toPositiveIntOrDefault(TripSyncManifest.CURRENT_PROTOCOL_VERSION)
+    val rawExpenses = payloadMap["expenses"] as? List<*>
+    if (rawExpenses != null) {
+        payloadMap["expenses"] = rawExpenses.map { rawExpense ->
+            val expenseMap = (rawExpense as? Map<*, *>)?.entries
+                ?.mapNotNull { (k, v) -> (k as? String)?.let { it to v } }
+                ?.toMap()
+                ?.toMutableMap()
+                ?: return@map rawExpense
+            val rawBreakdown = expenseMap["breakdown"] as? List<*>
+            expenseMap["breakdown"] = rawBreakdown?.mapNotNull { rawItem ->
+                val itemMap = rawItem as? Map<*, *> ?: return@mapNotNull null
+                val label = (itemMap["label"] as? String)?.trim().orEmpty()
+                val amount = when (val rawAmount = itemMap["amount"]) {
+                    is Number -> rawAmount.toDouble()
+                    is String -> rawAmount.toDoubleOrNull()
+                    else -> null
+                } ?: return@mapNotNull null
+                if (!amount.isFinite() || amount < 0.0) return@mapNotNull null
+                val isActive = when (val rawActive = itemMap["isActive"]) {
+                    is Boolean -> rawActive
+                    is String -> rawActive.toBooleanStrictOrNull() ?: true
+                    else -> true
+                }
+                linkedMapOf(
+                    "label" to label,
+                    "amount" to amount,
+                    "isActive" to isActive
+                )
+            }.orEmpty()
+            expenseMap
+        }
+    }
     return bundlePayloadAdapter.toJson(payloadMap)
 }
 

@@ -1,6 +1,7 @@
 package com.wanderlog.android.domain.model.sync
 
 import com.squareup.moshi.JsonClass
+import com.wanderlog.android.domain.model.ExpenseBreakdownItem
 import com.wanderlog.android.domain.model.TravellerProfile
 
 @JsonClass(generateAdapter = true)
@@ -109,6 +110,7 @@ data class SyncExpensePayload(
     val category: String,
     val date: String? = null,
     val notes: String? = null,
+    val breakdown: List<ExpenseBreakdownItem> = emptyList(),
     val createdAt: Long,
     val metadata: SyncMetadata
 )

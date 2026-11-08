@@ -9,6 +9,7 @@ import com.wanderlog.android.data.local.entity.ItineraryItemEntity
 import com.wanderlog.android.data.local.entity.PackingItemEntity
 import com.wanderlog.android.data.sync.SyncMetadataStamp
 import com.wanderlog.android.domain.model.Expense
+import com.wanderlog.android.domain.model.ExpenseBreakdownItem
 import com.wanderlog.android.domain.model.ExpenseCategory
 import com.wanderlog.android.domain.model.ItineraryItem
 import com.wanderlog.android.domain.model.ItineraryItemType
@@ -73,13 +74,18 @@ class SyncMetadataStampingTest {
         val expense = Expense(
             id = "expense-1",
             tripId = "trip-1",
-            title = "Train",
-            amount = 42.5,
+            title = "Hotel",
+            amount = 1000.0,
             currencyCode = "USD",
-            category = ExpenseCategory.TRANSPORT,
+            category = ExpenseCategory.ACCOMMODATION,
             date = LocalDate.of(2026, 5, 2),
-            notes = "Shinkansen"
+            notes = "Family stay",
+            breakdown = listOf(
+                ExpenseBreakdownItem(label = "parents", amount = 700.0, isActive = false),
+                ExpenseBreakdownItem(label = "our family", amount = 300.0, isActive = true)
+            )
         )
+        val breakdownRawSlot = slot<String>()
         val updatedAtSlot = slot<Long>()
         val deviceIdSlot = slot<String>()
 
@@ -92,6 +98,7 @@ class SyncMetadataStampingTest {
                 category = expense.category.name,
                 date = expense.date,
                 notes = expense.notes,
+                breakdownRaw = capture(breakdownRawSlot),
                 updatedAt = capture(updatedAtSlot),
                 lastModifiedByDeviceId = capture(deviceIdSlot)
             )
@@ -103,6 +110,8 @@ class SyncMetadataStampingTest {
 
         assertEquals(333L, updatedAtSlot.captured)
         assertEquals("device-b", deviceIdSlot.captured)
+        assertEquals(expense.breakdown, com.wanderlog.android.core.util.ExpenseBreakdownCodec.decode(breakdownRawSlot.captured))
+        assertEquals(300.0, expense.activeAmount, 0.001)
     }
 
     @Test

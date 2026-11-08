@@ -2,7 +2,7 @@
 
 ## Local Database
 
-- `WanderlogDatabase` version: `7`
+- `WanderlogDatabase` version: `11`
 - Exported schema path: `app/schemas/`
 
 ## Current Tables

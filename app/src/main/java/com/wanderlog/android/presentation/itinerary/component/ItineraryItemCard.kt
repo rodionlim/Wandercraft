@@ -208,6 +208,11 @@ fun ItineraryItemCard(
                     }
                 }
                 linkedExpense?.let { expense ->
+                    val budgetLabel = if (expense.breakdown.isNotEmpty() && expense.activeAmount != expense.amount) {
+                        "Budget: ${expense.activeAmount.toCurrencyString(expense.currencyCode)} (Total: ${expense.amount.toCurrencyString(expense.currencyCode)})"
+                    } else {
+                        "Budget: ${expense.amount.toCurrencyString(expense.currencyCode)}"
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.AttachMoney,
@@ -217,11 +222,23 @@ fun ItineraryItemCard(
                         )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            "Budget: ${expense.amount.toCurrencyString(expense.currencyCode)}",
+                            budgetLabel,
                             style = MaterialTheme.typography.bodySmall,
                             color = accent,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1
+                        )
+                    }
+                    if (expense.breakdown.isNotEmpty()) {
+                        val breakdownSummary = expense.breakdown.joinToString(" • ") { part ->
+                            val formatted = "${part.amount.toCurrencyString(expense.currencyCode)} → ${part.label}"
+                            if (part.isActive) formatted else "$formatted (inactive)"
+                        }
+                        Text(
+                            breakdownSummary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2
                         )
                     }
                 }

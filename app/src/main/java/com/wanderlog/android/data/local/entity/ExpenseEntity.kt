@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.wanderlog.android.core.util.ExpenseBreakdownCodec
 import com.wanderlog.android.domain.model.Expense
 import com.wanderlog.android.domain.model.ExpenseCategory
 import java.time.LocalDate
@@ -28,6 +29,7 @@ data class ExpenseEntity(
     val category: String,
     val date: LocalDate? = null,
     val notes: String? = null,
+    @ColumnInfo(name = "cost_breakdown") val breakdownRaw: String = "",
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "updated_at") val updatedAt: Long = createdAt,
     @ColumnInfo(name = "deleted_at") val deletedAt: Long? = null,
@@ -41,7 +43,8 @@ data class ExpenseEntity(
         currencyCode = currencyCode,
         category = ExpenseCategory.valueOf(category),
         date = date,
-        notes = notes
+        notes = notes,
+        breakdown = ExpenseBreakdownCodec.decode(breakdownRaw)
     )
 
     companion object {
@@ -60,6 +63,7 @@ data class ExpenseEntity(
             category = expense.category.name,
             date = expense.date,
             notes = expense.notes,
+            breakdownRaw = ExpenseBreakdownCodec.encode(expense.breakdown),
             createdAt = createdAt,
             updatedAt = updatedAt,
             deletedAt = deletedAt,

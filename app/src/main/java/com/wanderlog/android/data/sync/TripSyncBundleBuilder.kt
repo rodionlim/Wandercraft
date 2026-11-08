@@ -4,6 +4,7 @@ import androidx.room.withTransaction
 import com.wanderlog.android.data.local.WanderlogDatabase
 import android.content.Context
 import android.net.Uri
+import com.wanderlog.android.core.util.ExpenseBreakdownCodec
 import com.wanderlog.android.core.util.TravellerProfilesCodec
 import com.wanderlog.android.data.local.dao.AttachmentDao
 import com.wanderlog.android.data.local.dao.ExpenseDao
@@ -174,6 +175,7 @@ private fun ExpenseEntity.toSyncPayload(): SyncExpensePayload = SyncExpensePaylo
     category = category,
     date = date?.toString(),
     notes = notes,
+    breakdown = ExpenseBreakdownCodec.decode(breakdownRaw),
     createdAt = createdAt,
     metadata = SyncMetadata(
         updatedAt = updatedAt,

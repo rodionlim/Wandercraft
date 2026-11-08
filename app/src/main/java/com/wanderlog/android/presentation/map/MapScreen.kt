@@ -38,6 +38,7 @@ import com.google.maps.android.compose.*
 import androidx.hilt.navigation.compose.hiltViewModel
 import java.time.format.DateTimeFormatter
 import com.wanderlog.android.core.util.toFriendlyDateTimePartsOrNull
+import com.wanderlog.android.domain.model.ItineraryItemType
 
 @Composable
 fun MapScreen(onBack: () -> Unit, viewModel: MapViewModel = hiltViewModel()) {
@@ -51,8 +52,9 @@ fun MapScreen(onBack: () -> Unit, viewModel: MapViewModel = hiltViewModel()) {
     var mapLoaded by remember { mutableStateOf(false) }
     val camera = rememberCameraPositionState()
     val listState = rememberLazyListState()
-    val days = remember(state.points) { state.points.groupBy { it.dayNumber ?: Int.MAX_VALUE }.toSortedMap() }
-    val stops = remember(state.points, selectedDay, query) { visibleMapPoints(state.points, selectedDay, query) }
+    val mapPoints = remember(state.points) { state.points.filterExcludedMapPoints() }
+    val days = remember(mapPoints) { mapPoints.groupBy { it.dayNumber ?: Int.MAX_VALUE }.toSortedMap() }
+    val stops = remember(mapPoints, selectedDay, query) { visibleMapPoints(mapPoints, selectedDay, query) }
     val selected = stops.firstOrNull { it.item.id == state.selectedItemId }
     val density = LocalDensity.current
     val dark = isSystemInDarkTheme()
@@ -133,7 +135,7 @@ fun MapScreen(onBack: () -> Unit, viewModel: MapViewModel = hiltViewModel()) {
                             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to itinerary") }
                             Column(Modifier.weight(1f)) {
                                 Text("Explore your trip", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text("${state.points.size} places · ${days.size} ${if (days.size == 1) "day" else "days"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${mapPoints.size} places · ${days.size} ${if (days.size == 1) "day" else "days"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             if (state.isResolving) CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp)
                         }
@@ -179,8 +181,8 @@ fun MapScreen(onBack: () -> Unit, viewModel: MapViewModel = hiltViewModel()) {
                     }
                     when {
                         state.mapError != null -> MapMessage("Map unavailable", "Your places are saved. Map setup needs attention before they can be displayed.")
-                        state.isResolving && state.points.isEmpty() -> MapMessage("Finding your places", "Adding your itinerary stops to the map…")
-                        state.points.isEmpty() -> MapMessage("Your trip starts here", "Add places to your itinerary to see them on the map.")
+                        state.isResolving && mapPoints.isEmpty() -> MapMessage("Finding your places", "Adding your itinerary stops to the map…")
+                        mapPoints.isEmpty() -> MapMessage("Your trip starts here", "Add places to your itinerary to see them on the map.")
                         stops.isEmpty() -> MapMessage("No places found", "Try another search or select All days.")
                         else -> LazyColumn(state = listState, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(stops, key = { it.item.id }) { point ->
@@ -256,8 +258,17 @@ private fun MapMessage(title: String, message: String) {
     }
 }
 
+internal fun MapPointUi.isExcludedFromMap(finalDayNumber: Int? = null): Boolean =
+    item.itemType == ItineraryItemType.FLIGHT &&
+        (dayNumber == 1 || isFinalDay || (finalDayNumber != null && dayNumber == finalDayNumber))
+
+internal fun List<MapPointUi>.filterExcludedMapPoints(): List<MapPointUi> {
+    val finalDayNumber = mapNotNull { it.dayNumber }.maxOrNull()
+    return filterNot { it.isExcludedFromMap(finalDayNumber) }
+}
+
 internal fun visibleMapPoints(points: List<MapPointUi>, day: Int?, query: String): List<MapPointUi> =
-    points.filter { point ->
+    points.filterExcludedMapPoints().filter { point ->
         (day == null || (point.dayNumber ?: Int.MAX_VALUE) == day) &&
             (query.isBlank() || listOfNotNull(point.item.title, point.item.place?.name, point.item.place?.address)
                 .any { it.contains(query.trim(), ignoreCase = true) })

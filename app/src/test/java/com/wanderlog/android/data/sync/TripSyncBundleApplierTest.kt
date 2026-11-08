@@ -10,8 +10,11 @@ import com.wanderlog.android.data.local.dao.TripNoteDao
 import com.wanderlog.android.data.local.dao.TripDao
 import com.wanderlog.android.data.local.dao.TripDayDao
 import com.wanderlog.android.data.local.entity.AttachmentEntity
+import com.wanderlog.android.data.local.entity.ExpenseEntity
 import com.wanderlog.android.data.local.entity.TripEntity
+import com.wanderlog.android.domain.model.ExpenseBreakdownItem
 import com.wanderlog.android.domain.model.sync.SyncAttachmentPayload
+import com.wanderlog.android.domain.model.sync.SyncExpensePayload
 import com.wanderlog.android.domain.model.sync.SyncMetadata
 import com.wanderlog.android.domain.model.sync.SyncTripPayload
 import com.wanderlog.android.domain.model.sync.TripSyncBundle
@@ -215,5 +218,66 @@ class TripSyncBundleApplierTest {
         assertTrue(coverFile.exists())
         assertEquals("cover-image", coverFile.readText())
         assertEquals(coverFile.toURI().toString(), insertedTrip.captured.coverImageUri)
+    }
+
+    @Test
+    fun `applyBundleInternal persists expense cost breakdown and active flags`() = kotlinx.coroutines.test.runTest {
+        every { context.filesDir } returns tempFolder.newFolder("trip-files-expense")
+        val applier = TripSyncBundleApplier(
+            database = null,
+            tripDao = tripDao,
+            tripDayDao = tripDayDao,
+            itineraryItemDao = itineraryItemDao,
+            itineraryItemAttachmentLinkDao = itineraryItemAttachmentLinkDao,
+            expenseDao = expenseDao,
+            packingItemDao = packingItemDao,
+            tripNoteDao = tripNoteDao,
+            attachmentDao = attachmentDao,
+            context = context
+        )
+        val insertedExpense = slot<ExpenseEntity>()
+        val breakdown = listOf(
+            ExpenseBreakdownItem(label = "parents", amount = 700.0, isActive = false),
+            ExpenseBreakdownItem(label = "our family", amount = 300.0, isActive = true)
+        )
+        val bundle = TripSyncBundle(
+            generatedAt = 10L,
+            trip = SyncTripPayload(
+                id = "trip-1",
+                name = "Kyoto",
+                destination = "Kyoto",
+                startDate = "2026-07-01",
+                endDate = "2026-07-05",
+                currencyCode = "SGD",
+                metadata = SyncMetadata(updatedAt = 500L, lastModifiedByDeviceId = "device-remote")
+            ),
+            expenses = listOf(
+                SyncExpensePayload(
+                    id = "expense-1",
+                    tripId = "trip-1",
+                    title = "Hotel",
+                    amount = 1000.0,
+                    currencyCode = "SGD",
+                    category = "ACCOMMODATION",
+                    date = "2026-07-01",
+                    breakdown = breakdown,
+                    createdAt = 100L,
+                    metadata = SyncMetadata(updatedAt = 500L, lastModifiedByDeviceId = "device-remote")
+                )
+            )
+        )
+
+        coEvery { tripDao.getTripByIdIncludingDeleted("trip-1") } returns null andThen null
+        coEvery { tripDao.insertTrip(any()) } returns Unit
+        coEvery { expenseDao.getByIdIncludingDeleted("expense-1") } returns null andThen null
+        coEvery { expenseDao.insertExpense(capture(insertedExpense)) } returns Unit
+
+        val result = applier.applyBundleInternal(bundle)
+
+        assertEquals(2, result.appliedRecords)
+        val domainExpense = insertedExpense.captured.toDomain()
+        assertEquals(1000.0, domainExpense.amount, 0.001)
+        assertEquals(300.0, domainExpense.activeAmount, 0.001)
+        assertEquals(breakdown, domainExpense.breakdown)
     }
 }

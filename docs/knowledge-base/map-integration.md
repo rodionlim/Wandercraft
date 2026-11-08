@@ -48,11 +48,11 @@ Flights are handled differently from regular itinerary items when choosing which
 
 - imported flight notes store explicit `Departure:` and `Arrival:` lines
 - map resolution can derive a preferred flight place from those notes even when an older saved place is stale
-- flights on non-final trip days prefer the arrival side
-- flights on the final trip day prefer the departure side
+- flights on Day 1 (`dayNumber == 1`) and on the final trip day are excluded from the map view so outbound and return flights do not draw long cross-country lines or zoom the map out from the destination
+- flights on intermediate trip days prefer the arrival side
 - if a saved flight place does not match the preferred endpoint, the map flow re-resolves it before plotting
 
-This keeps arrival flights anchored to where the trip is headed while still showing the departure-side airport for the final trip day.
+This keeps intermediate flights anchored to where the trip is headed while excluding Day 1 and final-day flights from the map view.
 
 ## Address-To-Maps Convenience Action
 

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wanderlog.android.core.util.ImportedMoneyParser
 import com.wanderlog.android.domain.model.Expense
+import com.wanderlog.android.domain.model.ExpenseBreakdownItem
 import com.wanderlog.android.domain.model.ExpenseCategory
 import com.wanderlog.android.domain.model.ItineraryItem
 import com.wanderlog.android.domain.model.ItineraryItemType
@@ -23,6 +24,12 @@ import java.time.LocalDate
 import java.util.UUID
 import javax.inject.Inject
 
+data class CostBreakdownFormItem(
+    val label: String = "",
+    val amount: String = "",
+    val isActive: Boolean = true
+)
+
 data class ItemFormState(
     val title: String = "",
     val itemType: ItineraryItemType = ItineraryItemType.PLACE,
@@ -33,6 +40,7 @@ data class ItemFormState(
     val rating: Int? = null,
     val bookingRef: String = "",
     val costAmount: String = "",
+    val costBreakdown: List<CostBreakdownFormItem> = emptyList(),
     val linkedExpenseId: String? = null,
     val linkedExpenseExists: Boolean = false,
     val isSaved: Boolean = false,
@@ -65,6 +73,13 @@ class ItineraryItemFormViewModel @Inject constructor(
                 rating = item.rating,
                 bookingRef = item.bookingRef ?: "",
                 costAmount = linkedExpense?.amount?.toEditableAmount().orEmpty(),
+                costBreakdown = linkedExpense?.breakdown?.map { entry ->
+                    CostBreakdownFormItem(
+                        label = entry.label,
+                        amount = entry.amount.toEditableAmount(),
+                        isActive = entry.isActive
+                    )
+                }.orEmpty(),
                 linkedExpenseId = item.linkedExpenseId,
                 linkedExpenseExists = linkedExpense != null,
                 isSaved = false,
@@ -88,6 +103,57 @@ class ItineraryItemFormViewModel @Inject constructor(
     fun onBookingRefChange(v: String) = _state.update { it.copy(bookingRef = v) }
     fun onCostChange(v: String) = _state.update { it.copy(costAmount = v) }
 
+    fun onAddCostBreakdownItem() = _state.update { current ->
+        current.copy(costBreakdown = current.costBreakdown + CostBreakdownFormItem())
+    }
+
+    fun onCostBreakdownLabelChange(index: Int, label: String) = _state.update { current ->
+        if (index !in current.costBreakdown.indices) return@update current
+        val updated = current.costBreakdown.toMutableList()
+        updated[index] = updated[index].copy(label = label)
+        current.copy(costBreakdown = updated)
+    }
+
+    fun onCostBreakdownAmountChange(index: Int, amount: String) = _state.update { current ->
+        if (index !in current.costBreakdown.indices) return@update current
+        val previousSum = current.costBreakdown.sumParsedAmounts()
+        val updated = current.costBreakdown.toMutableList()
+        updated[index] = updated[index].copy(amount = amount)
+        val newSum = updated.sumParsedAmounts()
+        val currentCostParsed = ImportedMoneyParser.parseAmount(current.costAmount)
+        val shouldSyncCost = current.costAmount.isBlank() ||
+            (previousSum > 0.0 && currentCostParsed == previousSum) ||
+            (newSum > 0.0 && currentCostParsed == newSum)
+        current.copy(
+            costBreakdown = updated,
+            costAmount = if (shouldSyncCost && newSum > 0.0) newSum.toEditableAmount() else current.costAmount
+        )
+    }
+
+    fun onCostBreakdownActiveChange(index: Int, isActive: Boolean) = _state.update { current ->
+        if (index !in current.costBreakdown.indices) return@update current
+        val updated = current.costBreakdown.toMutableList()
+        updated[index] = updated[index].copy(isActive = isActive)
+        current.copy(costBreakdown = updated)
+    }
+
+    fun onRemoveCostBreakdownItem(index: Int) = _state.update { current ->
+        if (index !in current.costBreakdown.indices) return@update current
+        val previousSum = current.costBreakdown.sumParsedAmounts()
+        val updated = current.costBreakdown.toMutableList().also { it.removeAt(index) }
+        val newSum = updated.sumParsedAmounts()
+        val currentCostParsed = ImportedMoneyParser.parseAmount(current.costAmount)
+        val shouldSyncCost = currentCostParsed == previousSum
+        current.copy(
+            costBreakdown = updated,
+            costAmount = when {
+                updated.isEmpty() && shouldSyncCost -> ""
+                shouldSyncCost && newSum > 0.0 -> newSum.toEditableAmount()
+                else -> current.costAmount
+            }
+        )
+    }
+
     fun save(
         tripId: String,
         dayId: String,
@@ -101,13 +167,42 @@ class ItineraryItemFormViewModel @Inject constructor(
             return
         }
 
-        val parsedCost = when {
+        val nonEmptyBreakdownRows = if (s.itemType.supportsLinkedExpense()) {
+            s.costBreakdown.filter { it.label.isNotBlank() || it.amount.isNotBlank() }
+        } else {
+            emptyList()
+        }
+        val parsedBreakdown = mutableListOf<ExpenseBreakdownItem>()
+        for (row in nonEmptyBreakdownRows) {
+            val rowAmount = ImportedMoneyParser.parseAmount(row.amount)
+            if (rowAmount == null || rowAmount < 0.0) {
+                _state.update { it.copy(error = "Enter a valid amount for each cost breakdown item.") }
+                return
+            }
+            val rowLabel = row.label.trim()
+            if (rowLabel.isBlank()) {
+                _state.update { it.copy(error = "Enter a label for each cost breakdown item.") }
+                return
+            }
+            parsedBreakdown += ExpenseBreakdownItem(
+                label = rowLabel,
+                amount = rowAmount,
+                isActive = row.isActive
+            )
+        }
+
+        val parsedCostInput = when {
             s.costAmount.isBlank() -> null
             else -> ImportedMoneyParser.parseAmount(s.costAmount)
         }
-        if (s.costAmount.isNotBlank() && parsedCost == null) {
+        if (s.costAmount.isNotBlank() && parsedCostInput == null) {
             _state.update { it.copy(error = "Enter a valid cost amount.") }
             return
+        }
+        val parsedCost = if (parsedBreakdown.isNotEmpty()) {
+            parsedBreakdown.sumOf(ExpenseBreakdownItem::amount)
+        } else {
+            parsedCostInput
         }
 
         val shouldLinkExpense = s.itemType.supportsLinkedExpense() && parsedCost != null
@@ -136,6 +231,7 @@ class ItineraryItemFormViewModel @Inject constructor(
                 syncLinkedExpense(
                     item = item,
                     amount = parsedCost,
+                    breakdown = parsedBreakdown,
                     currencyCode = currencyCode,
                     dayDate = dayDate,
                     itemTitle = s.title.trim()
@@ -152,6 +248,7 @@ class ItineraryItemFormViewModel @Inject constructor(
     private suspend fun syncLinkedExpense(
         item: ItineraryItem,
         amount: Double?,
+        breakdown: List<ExpenseBreakdownItem>,
         currencyCode: String,
         dayDate: LocalDate?,
         itemTitle: String
@@ -166,7 +263,9 @@ class ItineraryItemFormViewModel @Inject constructor(
                 amount = amount,
                 currencyCode = existingExpense?.currencyCode ?: currencyCode,
                 category = defaultCategory,
-                date = dayDate
+                date = dayDate,
+                notes = existingExpense?.notes,
+                breakdown = breakdown
             )
             if (_state.value.linkedExpenseExists && loadedLinkedExpense != null) {
                 updateExpense(expense)
@@ -193,6 +292,9 @@ class ItineraryItemFormViewModel @Inject constructor(
         }
     }
 }
+
+private fun List<CostBreakdownFormItem>.sumParsedAmounts(): Double =
+    mapNotNull { ImportedMoneyParser.parseAmount(it.amount)?.takeIf { value -> value >= 0.0 } }.sum()
 
 private fun Double.toEditableAmount(): String {
     val wholeNumber = toLong().toDouble() == this
